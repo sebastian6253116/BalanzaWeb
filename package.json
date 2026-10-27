@@ -11,7 +11,7 @@
     "apps/*"
   ],
   "scripts": {
-    "test": "node --test packages/plu-format/test/plu-format.test.js packages/scale-client/test/scale-client.test.js apps/api/test/api.test.js apps/api/test/server.test.js apps/api/test/users-sedes.test.js apps/agent/test/agent.test.js apps/agent/test/service.test.js apps/web/test/barcode.test.js",
+    "test": "node --test packages/plu-format/test/plu-format.test.js packages/scale-client/test/scale-client.test.js packages/xlsx/test/xlsx.test.js apps/api/test/api.test.js apps/api/test/server.test.js apps/api/test/users-sedes.test.js apps/agent/test/agent.test.js apps/agent/test/service.test.js apps/web/test/barcode.test.js",
     "start:api": "node apps/api/src/index.js",
     "build:web": "npm --workspace @balanza/web run build",
     "test:agent": "node --test apps/agent/test/agent.test.js apps/agent/test/service.test.js",

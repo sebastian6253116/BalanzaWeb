@@ -312,6 +312,35 @@ test('the article master exports as a .Txp with the published catalogue', async 
   }
 });
 
+test('the article master also exports as a real .xlsx workbook', async () => {
+  const guide = await (await api('/api/articles')).json();
+
+  const res = await api('/api/articles/export?format=xlsx');
+  assert.equal(res.status, 200);
+  assert.equal(
+    res.headers.get('content-type'),
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  );
+  assert.match(res.headers.get('content-disposition'), /maestro-balanza-\d{8}\.xlsx/);
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+
+  const body = Buffer.from(await res.arrayBuffer());
+  assert.equal(body.subarray(0, 2).toString('ascii'), 'PK');
+  assert.equal(Number(res.headers.get('content-length')), body.length);
+  assert.ok(body.length > 0);
+  assert.ok(guide.articles.length > 0);
+
+  const unsupported = await api('/api/articles/export?format=csv');
+  assert.equal(unsupported.status, 400);
+  assert.equal((await unsupported.json()).error, 'unsupported export format');
+
+  const txp = await api('/api/articles/export?format=txp');
+  assert.equal(txp.status, 200);
+  assert.match(txp.headers.get('content-type'), /text\/plain/);
+  assert.match(txp.headers.get('content-disposition'), /maestro-balanza-\d{8}\.txp/);
+  parseTxpText(await txp.text());
+});
+
 test('exporting the master requires articles.read', async () => {
   const roleRes = await api('/api/roles', {
     method: 'POST',

@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, download, money } from '../api.js';
 
 const PAGE_SIZES = [10, 30, 50, 100];
@@ -31,7 +31,7 @@ export default function Articles({ user }) {
   const [errors, setErrors] = useState([]);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState(null);
   const [notice, setNotice] = useState(null);
   const [menu, setMenu] = useState(null);
   const [searching, setSearching] = useState(false);
@@ -95,19 +95,20 @@ export default function Articles({ user }) {
   const from = filtered.length === 0 ? 0 : start + 1;
   const to = Math.min(start + pageSize, filtered.length);
 
-  async function exportCatalog() {
+  async function exportCatalog(format) {
     setError(null);
     setNotice(null);
-    setExporting(true);
+    setExporting(format);
     const today = new Date();
     const pad = (value) => String(value).padStart(2, '0');
     const stamp = `${today.getFullYear()}${pad(today.getMonth() + 1)}${pad(today.getDate())}`;
+    const label = format === 'xlsx' ? 'Excel' : '.Txp';
     try {
-      await download('/articles/export', `maestro-balanza-${stamp}.txp`);
+      await download(`/articles/export?format=${format}`, `maestro-balanza-${stamp}.${format}`);
     } catch (err) {
-      setError(`No se pudo exportar el maestro: ${err.message}`);
+      setError(`No se pudo exportar el maestro en ${label}: ${err.message}`);
     } finally {
-      setExporting(false);
+      setExporting(null);
     }
   }
 
@@ -232,9 +233,14 @@ export default function Articles({ user }) {
           {(canRead || canWrite) && (
             <div className="tight" style={{ display: 'flex', gap: 8 }}>
               {canRead && (
-                <button className="ghost" onClick={exportCatalog} disabled={exporting}>
-                  {exporting ? 'Exportando…' : 'Exportar maestro (.Txp)'}
-                </button>
+                <>
+                  <button onClick={() => exportCatalog('xlsx')} disabled={exporting !== null}>
+                    {exporting === 'xlsx' ? 'Exportando Excel…' : 'Exportar Excel'}
+                  </button>
+                  <button onClick={() => exportCatalog('txp')} disabled={exporting !== null}>
+                    {exporting === 'txp' ? 'Exportando .Txp…' : 'Exportar .Txp'}
+                  </button>
+                </>
               )}
               {canWrite && <button onClick={startCreate}>Nuevo artículo</button>}
             </div>

@@ -136,7 +136,7 @@ lo quita. Un rol asignado a usuarios no se puede borrar (`409`). Los seeds `admi
 POST /api/auth/login | logout        GET /api/auth/me
 GET/POST /api/articles               PATCH/DELETE /api/articles/:id
 GET  /api/articles/suggest           PUT /api/articles        (carga masiva)
-GET  /api/articles/export            (maestro .Txp para el software del fabricante)
+GET  /api/articles/export?format=txp|xlsx  (maestro .Txp o Excel; sin `format` usa `txp`)
 GET  /api/catalog                    GET /api/units
 GET/POST /api/sedes                  GET/POST /api/sedes/:id/scales
 DELETE /api/sedes/:id                DELETE /api/sedes/:id/scales/:scaleId
@@ -185,7 +185,7 @@ POST /agent/report
 
 | Pantalla | Permiso | Qué hace |
 |---|---|---|
-| Artículos | `articles.read` | Maestro con **paginado 10/30/50/100**, búsqueda progresiva con spinner, alta/edición con sugerencia de código libre y selector de las 13 unidades, y botón **Exportar maestro (.Txp)** para descargar el catálogo activo en el formato del software del fabricante |
+| Artículos | `articles.read` | Maestro con **paginado 10/30/50/100**, búsqueda progresiva con spinner, alta/edición con sugerencia de código libre y selector de las 13 unidades, y dos botones, **Exportar Excel** y **Exportar .Txp**, para descargar el catálogo activo como planilla editable o en el formato del software del fabricante |
 | Código de barras | `articles.read` | Genera el EAN-13 de una referencia: base de 12 dígitos con relleno a la derecha y dígito de control módulo 10. Dibuja el código como SVG (EAN-13 o CODE128) y lo descarga en PNG |
 | Sedes y balanzas | `sedes.read` | Alta y **baja** de sedes y balanzas (con confirmación), y código de autorización |
 | Publicar | `deployments.create` | Elige sede y destino (todas o balanzas puntuales) y crea la revisión |
@@ -219,18 +219,21 @@ Para pasar a MySQL en el VPS alcanza con reimplementar los cuatro métodos de
 ```powershell
 node --test packages/plu-format/test/plu-format.test.js `
                packages/scale-client/test/scale-client.test.js `
+               packages/xlsx/test/xlsx.test.js `
                apps/api/test/api.test.js apps/api/test/server.test.js `
                apps/api/test/users-sedes.test.js `
                apps/agent/test/agent.test.js apps/agent/test/service.test.js `
                apps/web/test/barcode.test.js
 ```
 
-**93 tests, todos verdes.** Incluyen:
+**99 tests, todos verdes.** Incluyen:
 
 - Golden byte-a-byte de los **832 registros** y de **todas las tramas de control**
   contra las capturas reales (fixture inmutable `test/fixtures/plu-832-original.txp`).
 - Transporte UDP contra una balanza falsa (ACK, reintento, timeout).
 - API: flujo completo, permisos, roles editables, sesiones, validación de catálogo.
+- Excel: escritor OOXML propio sin dependencias, ZIP determinista, las seis partes del
+  paquete, celdas de texto en línea, formato de moneda y validación del nombre de hoja.
 - Agente: push, 304, skip por hash, fallo no avanza revisión, envío selectivo, comando `version`.
 - Código de barras: dígito de control EAN-13 contra vectores conocidos, geometría de 95 módulos y checksum de CODE128 subset B.
 - Servicio: rutas, log rotativo y tolerante a fallos, guardado atómico de la

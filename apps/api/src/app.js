@@ -22,8 +22,25 @@ import {
 } from './auth.js';
 import { PERMISSIONS, PERMISSION_KEYS } from './permissions.js';
 import { WEIGHT_UNITS, toTxpText, validateRows } from '../../../packages/plu-format/src/index.js';
+import { buildXlsx } from '../../../packages/xlsx/src/index.js';
 
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
+
+const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+const ARTICLE_EXPORT_COLUMNS = [
+  { header: 'Teclado', key: 'pluNumber', width: 10, type: 'integer' },
+  { header: 'Nombre', key: 'name', width: 42 },
+  { header: 'LF', key: 'lfCode', width: 10, type: 'integer' },
+  { header: 'Código', key: 'barcode', width: 14, type: 'integer' },
+  { header: 'Tipo de código', key: 'barcodeType', width: 16, type: 'integer' },
+  { header: 'Precio', key: 'price', width: 12, type: 'money' },
+  { header: 'Unidad', key: 'unitCode', width: 10, type: 'integer' },
+  { header: 'Departamento', key: 'department', width: 14, type: 'integer' },
+  { header: 'Peso PT', key: 'packWeight', width: 10, type: 'text' },
+  { header: 'Validez', key: 'validityDays', width: 10, type: 'integer' },
+  { header: 'Empaque', key: 'packageType', width: 10, type: 'integer' },
+];
 
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
@@ -85,14 +102,14 @@ export function createApp({
     res.end(payload);
   };
 
-  const attachment = (res, text, filename) => {
-    const body = Buffer.from(text, 'ascii');
+  const attachment = (res, body, filename, contentType = 'text/plain; charset=us-ascii') => {
+    const payload = Buffer.isBuffer(body) ? body : Buffer.from(body, 'ascii');
     res.writeHead(200, {
-      'content-type': 'text/plain; charset=us-ascii',
-      'content-length': body.length,
+      'content-type': contentType,
+      'content-length': payload.length,
       'content-disposition': `attachment; filename="${filename}"`,
     });
-    res.end(body);
+    res.end(payload);
   };
 
   const notModified = (res) => {
@@ -448,8 +465,35 @@ export function createApp({
       method: 'GET',
       pattern: /^\/api\/articles\/export$/,
       permission: 'articles.read',
-      handler: async (req, res) =>
-        attachment(res, toTxpText(activeArticles()), `maestro-balanza-${localDateStamp()}.txp`),
+      handler: async (req, res, params, query) => {
+        const format = query.get('format') ?? 'txp';
+        const articles = activeArticles();
+        const stamp = localDateStamp();
+
+        if (format === 'txp') {
+          return attachment(res, toTxpText(articles), `maestro-balanza-${stamp}.txp`);
+        }
+        if (format !== 'xlsx') return fail(res, 400, 'unsupported export format');
+
+        const workbook = buildXlsx({
+          sheetName: 'Artículos',
+          columns: ARTICLE_EXPORT_COLUMNS,
+          rows: articles.map((article) => ({
+            pluNumber: article.pluNumber,
+            name: article.name,
+            lfCode: article.lfCode,
+            barcode: article.barcode,
+            barcodeType: article.barcodeType,
+            price: article.priceCents / 100,
+            unitCode: article.unitCode,
+            department: article.department,
+            packWeight: '0.000',
+            validityDays: article.validityDays,
+            packageType: article.packageType,
+          })),
+        });
+        return attachment(res, workbook, `maestro-balanza-${stamp}.xlsx`, XLSX_CONTENT_TYPE);
+      },
     },
     {
       method: 'GET',
