@@ -118,10 +118,17 @@ if (-not $ApiUrl -and -not $PairingCode) {
   if ($Quiet -or -not [Environment]::UserInteractive) {
     Write-Warning 'El agente quedó instalado pero NO está enrolado. Para conectarlo, ejecute configurar-agente.ps1 o enrolle a mano con el comando enroll.'
   } else {
-    Write-Host 'Opening the connection window...'
-    & (Join-Path $PSScriptRoot 'configurar-agente.ps1') -InstallDir $InstallDir -DataDir $DataDir
-    if ($LASTEXITCODE -ne 0) {
-      Write-Warning 'El agente quedó instalado pero NO está enrolado (se cerró o falló la ventana de conexión). Puede reintentar con configurar-agente.ps1.'
+    # An old package may not ship the window; the service is already installed,
+    # so a missing helper must degrade to a warning instead of a failed install.
+    $configureScript = Join-Path $PSScriptRoot 'configurar-agente.ps1'
+    if (Test-Path -LiteralPath $configureScript) {
+      Write-Host 'Opening the connection window...'
+      & $configureScript -InstallDir $InstallDir -DataDir $DataDir
+      if ($LASTEXITCODE -ne 0) {
+        Write-Warning 'El agente quedó instalado pero NO está enrolado (se cerró o falló la ventana de conexión). Puede reintentar con configurar-agente.ps1.'
+      }
+    } else {
+      Write-Warning 'No se encontró configurar-agente.ps1 en esta carpeta. El agente quedó instalado pero NO está enrolado; use el comando enroll para conectarlo.'
     }
   }
 } elseif (-not ($ApiUrl -and $PairingCode)) {

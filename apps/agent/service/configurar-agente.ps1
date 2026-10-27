@@ -134,6 +134,9 @@ function Invoke-Connect {
       $friendly = 'El código venció. Generá uno nuevo en la web (dura 15 minutos).'
     } elseif ($message -match 'unknown pairing code') {
       $friendly = 'El código no existe. Verificá que sea el de esta sede.'
+    } elseif ($message -match 'fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|getaddrinfo') {
+      # The most common failure at a sede: wrong address, no DNS or no route out.
+      $friendly = 'No se pudo conectar con el servidor. Revisá la dirección y que esta PC tenga acceso a la red.'
     } else {
       $friendly = "No se pudo conectar: $message"
     }
