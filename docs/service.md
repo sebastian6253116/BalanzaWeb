@@ -112,6 +112,7 @@ Parámetros:
 | `-DataDir` | `%ProgramData%\BalanzaWeb\Agent` |
 | `-ApiUrl` | (opcional) URL de la API |
 | `-PairingCode` | (opcional) código de emparejamiento |
+| `-Quiet` | (opcional) no abre la ventana de conexión; deja el aviso en consola |
 
 El script:
 
@@ -128,9 +129,10 @@ El script:
    `Administradores` en un Windows en español y `icacls` falla al resolverlo.
    Si este paso o el arranque fallan, el script desinstala el servicio solo, para
    no dejar una instalación a medias.
-6. Arranca el servicio y muestra su estado.
-7. Si se pasaron `-ApiUrl` y `-PairingCode`, ejecuta `enroll` con
-   `BALANZA_AGENT_HOME=$DataDir` y reinicia el servicio.
+6. Si se pasaron `-ApiUrl` y `-PairingCode`, ejecuta `enroll` con
+   `BALANZA_AGENT_HOME=$DataDir` **antes** del primer arranque. Así el servicio
+   arranca ya enrolado y no queda repitiendo `FATAL not enrolled yet`.
+7. Arranca el servicio y muestra su estado.
 
 Si se instala sin código de emparejamiento, se puede enrolar después:
 
@@ -142,6 +144,28 @@ Remove-Item Env:BALANZA_AGENT_HOME
 Restart-Service BalanzaWebAgent
 ```
 
+### Ventana de primer arranque
+
+Si `install.ps1` se ejecuta sin `-ApiUrl` y sin `-PairingCode`, al terminar abre
+la ventana **BalanzaWeb - Conectar agente**. Ahí el operador pega la dirección
+del servidor y el código de autorización que genera la web en **Sedes**.
+
+- El código dura **15 minutos** y sirve **una sola vez**.
+- Al conectar, el agente guarda la configuración y reinicia el servicio; después
+  **no vuelve a pedir el código**.
+- Si la ventana no se abre (por ejemplo, una instalación desatendida con
+  `-Quiet` o una sesión sin escritorio), el servicio queda instalado pero sin
+  enrolar y el log repite `FATAL not enrolled yet` cada 60 segundos.
+- Para volver a abrirla (código vencido, reconectar la máquina o cambiar de
+  servidor), ejecute desde la carpeta del paquete:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\configurar-agente.ps1
+```
+
+La ventana detecta una configuración existente, muestra la sede y el agente
+actuales y ofrece **Reconectar** para sobrescribirla.
+
 ### Paquete de distribución
 
 `npm run agent:package` arma el zip que se lleva a la sede. Requiere el binario
@@ -150,7 +174,7 @@ Restart-Service BalanzaWebAgent
 - Salida: `apps/agent/dist/balanza-agent-<version>-win-x64.zip`.
 - Contenido plano (todo en la raíz del zip): `balanza-agent.exe`,
   `balanza-agent-service.exe`, `balanza-agent.xml.template`, `install.ps1`,
-  `uninstall.ps1`, `smoke-test.ps1` y `README.txt`.
+  `uninstall.ps1`, `smoke-test.ps1`, `configurar-agente.ps1` y `README.txt`.
 - El script imprime la ruta absoluta, el tamaño en MB y el SHA-256 del zip.
 
 Para verificar un paquete extraído sin tocar una instalación real, corra el smoke

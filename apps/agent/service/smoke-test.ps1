@@ -95,7 +95,8 @@ try {
   Step 'clean slate' (-not (Get-Service -Name $serviceName -ErrorAction SilentlyContinue)) "sandbox $Root"
 
   # --- install -----------------------------------------------------------
-  $install = Invoke-Child $installScript @('-InstallDir', $installDir, '-DataDir', $dataDir)
+  # -Quiet keeps the sandbox unattended: the installer must never open the GUI here.
+  $install = Invoke-Child $installScript @('-InstallDir', $installDir, '-DataDir', $dataDir, '-Quiet')
   Step 'install.ps1 exit code' ($install.exit -eq 0) "exit=$($install.exit)"
   if ($install.exit -ne 0) { throw ("install.ps1 failed:`n" + ($install.output -join "`n")) }
 

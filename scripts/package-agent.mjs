@@ -32,6 +32,7 @@ const template = join(serviceDir, 'balanza-agent.xml.template');
 const installScript = join(serviceDir, 'install.ps1');
 const uninstallScript = join(serviceDir, 'uninstall.ps1');
 const smokeTest = join(serviceDir, 'smoke-test.ps1');
+const configureScript = join(serviceDir, 'configurar-agente.ps1');
 
 const required = [
   [agentExe, 'run "npm run agent:build" to produce it'],
@@ -40,6 +41,7 @@ const required = [
   [installScript, 'the installer is part of the repository'],
   [uninstallScript, 'the uninstaller is part of the repository'],
   [smokeTest, 'the smoke test is part of the repository'],
+  [configureScript, 'the first-run connection window is part of the repository'],
 ];
 
 const missing = required.filter(([path]) => !existsSync(path));
@@ -75,8 +77,10 @@ Instalación
 
    powershell -ExecutionPolicy Bypass -File .\\install.ps1 -ApiUrl "https://balanza.ejemplo.com" -PairingCode "ABCDEFGH"
 
-   -ApiUrl y -PairingCode son opcionales. Si los omite, puede enrolar el agente
-   más tarde con el comando enroll.
+   -ApiUrl y -PairingCode son opcionales. Si los omite, el instalador abre una
+   ventana para pegar el código de autorización que muestra la web en Sedes.
+   Si el código venció o hay que reconectar la máquina, vuelva a ejecutar
+   configurar-agente.ps1.
 
 Datos y logs
 ------------
@@ -111,6 +115,7 @@ const files = [
   [installScript, 'install.ps1'],
   [uninstallScript, 'uninstall.ps1'],
   [smokeTest, 'smoke-test.ps1'],
+  [configureScript, 'configurar-agente.ps1'],
 ];
 for (const [source, name] of files) {
   const target = join(stagingDir, name);

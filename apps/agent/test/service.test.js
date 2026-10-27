@@ -18,6 +18,10 @@ import { agentHome, defaultConfigPath, defaultLogDir, runDir, stopFlagPath, pidP
 import { createLogger } from '../src/log.js';
 import { loadConfig, saveConfig } from '../src/config.js';
 
+const serviceDir = fileURLToPath(new URL('../service/', import.meta.url));
+const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
+const windowsOnly = { skip: process.platform !== 'win32' && 'Windows only' };
+
 function tempDir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
 }
@@ -173,4 +177,40 @@ test('run: exits cleanly when request-stop is called', { timeout: 25000 }, async
     if (child && child.exitCode === null) child.kill();
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('service: the first-run connection window is part of the service folder', windowsOnly, () => {
+  assert.ok(
+    existsSync(join(serviceDir, 'configurar-agente.ps1')),
+    'configurar-agente.ps1 must sit next to install.ps1',
+  );
+});
+
+test('service: every PowerShell service script parses without syntax errors', windowsOnly, () => {
+  const scripts = ['install.ps1', 'uninstall.ps1', 'configurar-agente.ps1', 'smoke-test.ps1'];
+
+  for (const name of scripts) {
+    const path = join(serviceDir, name).replace(/'/g, "''");
+    const command = [
+      '$tokens = $null',
+      '$errors = $null',
+      `[System.Management.Automation.Language.Parser]::ParseFile('${path}', [ref]$tokens, [ref]$errors) | Out-Null`,
+      'Write-Output "count=$($errors.Count)"',
+      '$errors | ForEach-Object { Write-Output ("  line {0}: {1}" -f $_.Extent.StartLineNumber, $_.Message) }',
+    ].join('; ');
+
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+      encoding: 'utf8',
+    });
+    const output = `${result.stdout}${result.stderr}`.trim();
+
+    assert.equal(result.status, 0, `PowerShell failed while parsing ${name}: ${output}`);
+    assert.match(output, /count=0/, `syntax errors in ${name}:\n${output}`);
+  }
+});
+
+test('packaging: package-agent.mjs stages configurar-agente.ps1', windowsOnly, () => {
+  const source = readFileSync(join(repoRoot, 'scripts', 'package-agent.mjs'), 'utf8');
+  assert.match(source, /const configureScript = join\(serviceDir, 'configurar-agente\.ps1'\)/);
+  assert.match(source, /\[configureScript, 'configurar-agente\.ps1'\]/);
 });

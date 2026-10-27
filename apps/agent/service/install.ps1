@@ -4,7 +4,8 @@ param(
   [string]$InstallDir = 'C:\Program Files\BalanzaWeb\Agent',
   [string]$DataDir = (Join-Path $env:ProgramData 'BalanzaWeb\Agent'),
   [string]$ApiUrl,
-  [string]$PairingCode
+  [string]$PairingCode,
+  [switch]$Quiet
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,8 +66,8 @@ Write-Host "Installing the Windows service..."
 & (Join-Path $InstallDir 'balanza-agent-service.exe') install
 if ($LASTEXITCODE -ne 0) { throw 'The service install command failed.' }
 
-# The ACL and the first start are the only steps after registration that can fail,
-# so a failure here removes the service again instead of leaving a half-installed one.
+# The ACL, the enrollment and the first start are the steps after registration that
+# can fail, so a failure here removes the service instead of leaving a half-installed one.
 try {
   Write-Host "Restricting access to the data directory..."
   # Well-known SIDs, not localized names: "BUILTIN\Administrators" is "Administradores"
@@ -86,6 +87,24 @@ try {
   }
   Set-Acl -LiteralPath $DataDir -AclObject $acl
 
+  if ($ApiUrl -and $PairingCode) {
+    # Enroll before the first start: the service then boots with a valid config
+    # instead of logging "FATAL not enrolled yet" until someone enrolls it.
+    Write-Host "Enrolling the agent..."
+    $previousHome = $env:BALANZA_AGENT_HOME
+    $env:BALANZA_AGENT_HOME = $DataDir
+    try {
+      & (Join-Path $InstallDir 'balanza-agent.exe') enroll --api $ApiUrl --code $PairingCode
+      if ($LASTEXITCODE -ne 0) { throw 'Enrollment failed. Check the API URL and the pairing code.' }
+    } finally {
+      if ($null -eq $previousHome) {
+        Remove-Item Env:BALANZA_AGENT_HOME -ErrorAction SilentlyContinue
+      } else {
+        $env:BALANZA_AGENT_HOME = $previousHome
+      }
+    }
+  }
+
   Write-Host "Starting the service..."
   Start-Service -Name 'BalanzaWebAgent'
   Get-Service -Name 'BalanzaWebAgent' | Select-Object Name, Status, StartType | Format-Table -AutoSize
@@ -95,22 +114,17 @@ try {
   throw
 }
 
-if ($ApiUrl -and $PairingCode) {
-  Write-Host "Enrolling the agent..."
-  $previousHome = $env:BALANZA_AGENT_HOME
-  $env:BALANZA_AGENT_HOME = $DataDir
-  try {
-    & (Join-Path $InstallDir 'balanza-agent.exe') enroll --api $ApiUrl --code $PairingCode
-    if ($LASTEXITCODE -ne 0) { throw 'Enrollment failed. Check the API URL and the pairing code.' }
-  } finally {
-    if ($null -eq $previousHome) {
-      Remove-Item Env:BALANZA_AGENT_HOME -ErrorAction SilentlyContinue
-    } else {
-      $env:BALANZA_AGENT_HOME = $previousHome
+if (-not $ApiUrl -and -not $PairingCode) {
+  if ($Quiet -or -not [Environment]::UserInteractive) {
+    Write-Warning 'El agente quedó instalado pero NO está enrolado. Para conectarlo, ejecute configurar-agente.ps1 o enrolle a mano con el comando enroll.'
+  } else {
+    Write-Host 'Opening the connection window...'
+    & (Join-Path $PSScriptRoot 'configurar-agente.ps1') -InstallDir $InstallDir -DataDir $DataDir
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning 'El agente quedó instalado pero NO está enrolado (se cerró o falló la ventana de conexión). Puede reintentar con configurar-agente.ps1.'
     }
   }
-  Restart-Service -Name 'BalanzaWebAgent'
-} elseif ($ApiUrl -or $PairingCode) {
+} elseif (-not ($ApiUrl -and $PairingCode)) {
   Write-Warning 'Both -ApiUrl and -PairingCode are required to enroll. Skipping enrollment.'
 }
 
