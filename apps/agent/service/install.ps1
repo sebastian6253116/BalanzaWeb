@@ -115,7 +115,12 @@ try {
 }
 
 if (-not $ApiUrl -and -not $PairingCode) {
-  if ($Quiet -or -not [Environment]::UserInteractive) {
+  # An upgrade reuses the ProgramData config: enrolling again is not needed and the
+  # connection window must not pop up for an agent that is already connected.
+  $existingConfig = Join-Path $DataDir 'config\agent.config.json'
+  if (Test-Path -LiteralPath $existingConfig) {
+    Write-Host 'Existing configuration found: the agent stays enrolled, no window needed.'
+  } elseif ($Quiet -or -not [Environment]::UserInteractive) {
     Write-Warning 'El agente quedó instalado pero NO está enrolado. Para conectarlo, ejecute configurar-agente.ps1 o enrolle a mano con el comando enroll.'
   } else {
     # An old package may not ship the window; the service is already installed,
