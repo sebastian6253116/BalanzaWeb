@@ -1,6 +1,10 @@
 # BalanzaWeb — estado del proyecto
 
-Documento de traspaso. Última actualización: **2026-10-26**.
+Documento de traspaso. Última actualización: **2026-10-27**.
+
+**Estado en una línea:** desplegado en producción con Dokploy, catálogo real de 832
+artículos cargado, y pendiente la prueba de punta a punta con una balanza en la red
+de la sede.
 
 Resumen en una línea: web React en VPS + microservicio local que habla el
 **protocolo nativo** de las balanzas Rongta RLS1000 por **UDP**, sin instalar
@@ -127,8 +131,10 @@ GET/POST /api/articles               PATCH/DELETE /api/articles/:id
 GET  /api/articles/suggest           PUT /api/articles        (carga masiva)
 GET  /api/catalog                    GET /api/units
 GET/POST /api/sedes                  GET/POST /api/sedes/:id/scales
+DELETE /api/sedes/:id                DELETE /api/sedes/:id/scales/:scaleId
 POST /api/sedes/:id/pairing-code     POST /api/sedes/:id/deployments
 GET  /api/sedes/:id/status           GET/POST /api/users
+PATCH /api/users/:id                 DELETE /api/users/:id
 PUT  /api/users/:id/roles            PUT /api/users/:id/password
 GET  /api/roles                      PUT /api/roles/:key/permissions
 --- agentes ---
@@ -154,10 +160,10 @@ POST /agent/report
 | Pantalla | Permiso | Qué hace |
 |---|---|---|
 | Artículos | `articles.read` | Maestro con **paginado 10/30/50/100**, búsqueda progresiva con spinner, alta/edición con sugerencia de código libre y selector de las 13 unidades |
-| Sedes y balanzas | `sedes.read` | Alta de sedes, balanzas (nombre/IP/puerto) y código de autorización |
+| Sedes y balanzas | `sedes.read` | Alta y **baja** de sedes y balanzas (con confirmación), y código de autorización |
 | Publicar | `deployments.create` | Elige sede y destino (todas o balanzas puntuales) y crea la revisión |
 | Estado | `status.read` | Revisión publicada, resultado real por balanza y historial de envíos |
-| Usuarios | `users.manage` | Alta de usuarios, asignación de roles y matriz de permisos |
+| Usuarios | `users.manage` | Alta y **baja** de usuarios, edición de nombre/usuario/estado, cambio de clave y roles con guardado explícito. El rol de la cuenta `admin` está bloqueado |
 
 Además, las sedes y balanzas se pueden eliminar, y los usuarios se pueden editar, cambiar de clave o eliminar; toda acción destructiva pide confirmación y se valida también en la API.
 
@@ -216,8 +222,13 @@ node --test packages/plu-format/test/plu-format.test.js `
 |---|---|---|
 | Hecho | **Empaquetar el agente como servicio Windows y distribuirlo** (binario único, arranque automático, log a archivo, zip plano para la sede) | Implementado con Node SEA + WinSW; `npm run agent:package` genera `balanza-agent-<version>-win-x64.zip`; ver `docs/service.md` |
 | Hecho | **API lista para desplegar** (un solo proceso sirve API y web compilada, `/healthz`, headers de seguridad, rate limit de login, logs por request, archivos estáticos con fallback SPA, Dockerfile + compose + Caddy) | Implementado en `apps/api/src/app.js` e `apps/api/src/index.js`; artefactos en `deploy/` y guía en `docs/deploy.md` |
-| Alta | **Despliegue en VPS + HTTPS** | Pendiente de acceso a la infraestructura. Los artefactos (`deploy/`) no se ejecutaron en la máquina de desarrollo porque no hay Docker allí |
-| Media | **MySQL** | SQLite alcanza para una sede; varias sedes simultáneas necesitan servidor |
+| Hecho | **Despliegue en VPS + HTTPS** | Corriendo en Dokploy (Docker + Traefik + Let's Encrypt) desde `main`, con auto-deploy. Ver sección 15 |
+| Hecho | **Maestro de artículos en producción** | 832 artículos cargados con `PUT /api/articles` y persistidos en el volumen. 23 tienen precio 0 en el archivo original |
+| Hecho | **Administración completa de sedes, balanzas y usuarios** | Alta, baja y edición; ver sección 15 |
+| Alta | **Probar el flujo completo con hardware**: sede + balanza + publicación + agente real | Es lo único que falta para cerrar el circuito. Requiere la PC en la red `192.168.0.x` |
+| Alta | Revisar los **23 artículos con precio 0** antes de publicar | Pueden llegar a la balanza con precio cero |
+| Media | **MySQL** | SQLite alcanza para una sede; varias sedes simultáneas necesitan servidor. La API es síncrona, migrar exige volver async los handlers |
+| Media | Firmar el `.exe` del agente | Sin firma, SmartScreen puede bloquearlo en la sede |
 | Media | Verificar en hardware las **10 unidades sin confirmar** (50g, g, 10g, 100g, oz, lb, 500g, 600g, PCS(oz), PCS(lb)) | Hoy son inferidas del orden del desplegable |
 | Media | Mapear los **32 bytes finales** del registro (tara, precio de paquete, mensajes, descuento) | Requiere una captura con esos campos cargados |
 | Baja | Aislar cuál de los tres defectos del catálogo original disparaba el aborto | Se puede hacer con el CLI, sin GUI |
@@ -260,8 +271,76 @@ node --test packages/plu-format/test/plu-format.test.js `
 
 ## 14. Credenciales y datos sensibles
 
-- Credenciales de desarrollo: `admin` / `admin123`. **Cambiar antes de exponer la app.**
+- Credenciales de desarrollo: `admin` / `admin123`. **No usar en producción.**
+- En producción la clave del usuario `admin` ya se cambió. Los accesos al VPS, a la
+  base y al panel de Dokploy **no se guardan en este repositorio** (es público):
+  viven en el gestor de credenciales del cliente.
 - El token del agente vive en `%ProgramData%\BalanzaWeb\Agent\config\agent.config.json`
   en producción (en desarrollo, `data/agent.config.json`): restringir ACL y, más
   adelante, guardarlo con DPAPI o Credential Manager.
 - `data/` no debe versionarse (contiene la base y los tokens).
+
+## 15. Producción (estado al 2026-10-27)
+
+Desplegado en el VPS del cliente, administrado con **Dokploy** (Docker + Traefik +
+Let's Encrypt). Repositorio `sebastian6253116/BalanzaWeb`, rama `main`, auto-deploy
+al hacer push. La guía de configuración está en `docs/deploy.md`.
+
+### Topología
+
+- **Un solo contenedor** con la API y la web compilada servida por la misma
+  (`WEB_DIR=/app/apps/web/dist`). Traefik termina TLS; el contenedor escucha en 8080.
+- **SQLite** en el volumen `balanza-data` montado en `/app/data`.
+- El contenedor corre como **uid 1000**: el volumen debe ser *named volume*, nunca
+  bind mount, o la API no puede escribir.
+- **Una sola réplica**: SQLite no soporta varias instancias.
+- Variables: `PORT`, `DB_PATH`, `WEB_DIR`, `TRUST_PROXY=1`, `LOG_REQUESTS=1` y las
+  `BOOTSTRAP_ADMIN_*` (solo sirven para crear el primer usuario con la base vacía).
+- El servidor es **compartido** con otras aplicaciones del cliente y tiene ~7.8 GB de
+  RAM. Se agregó **4 GB de swap** (`/swapfile`) porque el build de Node lo tumbaba.
+
+### Base de datos de producción
+
+- 832 artículos cargados desde `BaseDatosBalanza/PLU BALANZA FARMAVID.Txp` con
+  `PUT /api/articles` (validación completa; 0 errores, 25 advertencias).
+- **23 artículos tienen precio 0** en el archivo original (PAN CANILLA, INACTIVO,
+  ASADO DE TIRAS X KG…): revisar antes de publicar a una balanza.
+- Todavía **no hay sedes, balanzas ni agentes** creados en producción.
+- La instancia MySQL que provisionó Dokploy está **sin usar** (la app es SQLite).
+  Borrarla libera ~460 MB de RAM.
+
+### Verificar que la API responde a los agentes
+
+| Prueba | Respuesta esperada | Qué demuestra |
+|---|---|---|
+| `GET /healthz` | `200 {"ok":true}` | contenedor vivo |
+| `GET /agent/sync` sin token | `401 agent token required` | ruta y autenticación activas |
+| `POST /agent/enroll` con código falso | `404 unknown pairing code` | el enrolamiento llega a la base |
+| `/agent/*` → `404 no route` | | el deploy quedó con código viejo |
+| `502` / `504` | | Traefik no llega al contenedor |
+
+La señal real de un agente sano está en la web (Sedes y balanzas → `Último resultado`
+y `Última conexión`) y en el log del servicio en la sede (`docs/service.md`).
+
+### Runbook: restaurar el rol del usuario `admin`
+
+Si alguien lo degrada por error, dentro del contenedor:
+
+```js
+// docker exec <contenedor> node /tmp/fix-admin.mjs
+import { DatabaseSync } from 'node:sqlite';
+const db = new DatabaseSync('/app/data/balanzaweb.db');
+db.prepare('DELETE FROM user_roles WHERE user_id = 1').run();
+db.prepare("INSERT INTO user_roles (user_id, role_id) SELECT 1, id FROM roles WHERE key = 'admin'").run();
+db.close();
+```
+
+Los permisos se resuelven por request, así que aplica sin reiniciar el servicio.
+
+### Protecciones de administración
+
+- El rol de la cuenta `admin` **no se puede editar** desde la web.
+- Los cambios de rol de otros usuarios requieren **Guardar cambios** explícito.
+- La API rechaza (`422`) quitarle el rol `admin` al último administrador, borrar tu
+  propia cuenta y borrar al último administrador.
+- Borrar una sede arrastra sus balanzas, agentes, publicaciones y resultados.
