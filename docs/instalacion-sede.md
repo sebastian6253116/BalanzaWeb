@@ -286,7 +286,17 @@ scales known:  0
 `revision: 0` y `scales known: 0` son normales en una sede recién creada, sin
 publicaciones todavía.
 
-**5. La PC llega a la API:**
+**5. Versión instalada:**
+
+```powershell
+& "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" version
+```
+
+Esperado: `balanza-agent 1.0.0`. Si alguna vez hay que soportar esa PC, este es el
+dato que hay que pedir: no hay otra forma de saber qué versión corre una vez
+instalada.
+
+**6. La PC llega a la API:**
 
 ```powershell
 (Invoke-WebRequest https://balanza.farmavid.com.ve/healthz -UseBasicParsing).StatusCode
@@ -294,7 +304,7 @@ publicaciones todavía.
 
 Esperado: `200`. El cuerpo de esa ruta es `{"ok":true,"uptimeSeconds":N}`.
 
-**6. La web muestra la sede conectada:** en **Estado**, panel **Agentes de la
+**7. La web muestra la sede conectada:** en **Estado**, panel **Agentes de la
 sede**, aparece una línea con el identificador de la máquina y la etiqueta verde
 **activo**, con un **último contacto** de hace segundos o minutos. En **Sedes y
 balanzas**, el **Último resultado** de cada balanza pasa a `ok` cuando hay una
@@ -504,9 +514,12 @@ importancia:
 - El token del agente **sigue siendo válido en la base** aunque la PC ya no lo
   tenga. Si alguien conserva una copia del `agent.config.json` (por ejemplo, un
   respaldo anterior a `-Purge`), ese token todavía puede leer y reportar para esa
-  sede. Hoy no hay botón en la web para revocar un agente: si se desinstala una
-  PC que va a salir de circulación, lo correcto es borrar la sede (si ya no se
-  usa) o ponerse en contacto con quien administra la base.
+  sede. Para anularlo, quien tenga el permiso `agents.manage` puede revocarlo
+  desde la web en **Estado → Agentes de la sede → Revocar**. La revocación surte
+  efecto de inmediato porque los permisos y el token se resuelven en cada
+  request; el agente de esa PC queda listado como `revocado` y seguirá
+  registrando `sync error: sync failed: HTTP 403` hasta que se vuelva a enrolar
+  con un código nuevo.
 - Volver a enrolar la misma PC genera un **agente nuevo** en la web; el anterior
   queda en el historial. Es esperado: no hay reutilización de tokens.
 

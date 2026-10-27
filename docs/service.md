@@ -221,6 +221,9 @@ Get-Content -Encoding UTF8 "$env:ProgramData\BalanzaWeb\Agent\logs\agent.log" -T
 
 # Estado desde el propio binario
 & "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" status
+
+# Versión instalada en esa PC
+& "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" version
 ```
 
 El servicio debe figurar `Running`. El log debe mostrar `agent starting` y,

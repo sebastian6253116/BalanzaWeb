@@ -194,7 +194,7 @@ node --test packages/plu-format/test/plu-format.test.js `
                apps/agent/test/agent.test.js apps/agent/test/service.test.js
 ```
 
-**67 tests, todos verdes.** Incluyen:
+**76 tests, todos verdes.** Incluyen:
 
 - Golden byte-a-byte de los **832 registros** y de **todas las tramas de control**
   contra las capturas reales (fixture inmutable `test/fixtures/plu-832-original.txp`).
