@@ -16,8 +16,10 @@ import {
   formatReport,
   indexTableNumbers,
   parseTxpFile,
+  parseTxpText,
   parseRecord,
   resolveUnitCode,
+  toTxpText,
   unitByCode,
   validateRows,
   verifyChecksum,
@@ -189,4 +191,63 @@ test('the production file only uses verified unit codes', () => {
   const codes = new Set(rows.map((r) => r.unitCode));
   for (const code of codes) assert.ok(VERIFIED_UNIT_CODES.has(code), `unit code ${code} is not verified`);
   assert.deepEqual([...codes].sort((a, b) => a - b), [4, 9, 10]);
+});
+
+const catalogueArticle = {
+  barcode: 11001,
+  name: 'LOMO DE AGUJA',
+  lfCode: 1,
+  pluNumber: 1,
+  priceCents: 1450,
+  unitCode: 4,
+  department: 21,
+  validityDays: 365,
+  packageType: 0,
+  barcodeType: 7,
+};
+
+test('catalogue articles round-trip through a 26-column .Txp and keep the known fields', () => {
+  const rows = parseTxpFile(TXP_832);
+  const articles = rows.map((row) => ({
+    barcode: row.barcode,
+    name: row.name.trim(),
+    lfCode: row.lfCode,
+    pluNumber: row.pluNumber,
+    priceCents: row.priceCents,
+    unitCode: row.unitCode,
+    department: row.department,
+    validityDays: row.validityDays,
+    packageType: row.packageType,
+    barcodeType: row.barcodeType,
+  }));
+
+  const text = toTxpText(articles);
+  const exported = parseTxpText(text);
+  assert.equal(exported.length, 832);
+
+  const knownColumns = [0, 1, 2, 3, 4, 5, 6, 7, 9, 10];
+  exported.forEach((row, index) => {
+    assert.equal(row.raw.length, 26, `row ${index + 1} must have 26 columns`);
+    for (const column of knownColumns) {
+      const actual = column === 1 ? row.raw[column].trim() : Number(row.raw[column]);
+      const expected = column === 1 ? rows[index].raw[column].trim() : Number(rows[index].raw[column]);
+      assert.equal(actual, expected, `row ${index + 1} column ${column} changed`);
+    }
+  });
+
+  assert.equal(toTxpText([]), '', 'an empty catalogue exports an empty body');
+});
+
+test('toTxpText rejects a non-ASCII name and names the row', () => {
+  assert.throws(
+    () => toTxpText([catalogueArticle, { ...catalogueArticle, name: 'CAFÉ CON LECHE' }]),
+    /row 2.*name contains a character outside printable ASCII/,
+  );
+});
+
+test('toTxpText rejects a NaN price and names the row', () => {
+  assert.throws(
+    () => toTxpText([{ ...catalogueArticle, priceCents: NaN }]),
+    /row 1.*priceCents is not a number/,
+  );
 });

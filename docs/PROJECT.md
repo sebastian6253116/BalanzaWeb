@@ -136,6 +136,7 @@ lo quita. Un rol asignado a usuarios no se puede borrar (`409`). Los seeds `admi
 POST /api/auth/login | logout        GET /api/auth/me
 GET/POST /api/articles               PATCH/DELETE /api/articles/:id
 GET  /api/articles/suggest           PUT /api/articles        (carga masiva)
+GET  /api/articles/export            (maestro .Txp para el software del fabricante)
 GET  /api/catalog                    GET /api/units
 GET/POST /api/sedes                  GET/POST /api/sedes/:id/scales
 DELETE /api/sedes/:id                DELETE /api/sedes/:id/scales/:scaleId
@@ -184,7 +185,7 @@ POST /agent/report
 
 | Pantalla | Permiso | Qué hace |
 |---|---|---|
-| Artículos | `articles.read` | Maestro con **paginado 10/30/50/100**, búsqueda progresiva con spinner, alta/edición con sugerencia de código libre y selector de las 13 unidades |
+| Artículos | `articles.read` | Maestro con **paginado 10/30/50/100**, búsqueda progresiva con spinner, alta/edición con sugerencia de código libre y selector de las 13 unidades, y botón **Exportar maestro (.Txp)** para descargar el catálogo activo en el formato del software del fabricante |
 | Código de barras | `articles.read` | Genera el EAN-13 de una referencia: base de 12 dígitos con relleno a la derecha y dígito de control módulo 10. Dibuja el código como SVG (EAN-13 o CODE128) y lo descarga en PNG |
 | Sedes y balanzas | `sedes.read` | Alta y **baja** de sedes y balanzas (con confirmación), y código de autorización |
 | Publicar | `deployments.create` | Elige sede y destino (todas o balanzas puntuales) y crea la revisión |
@@ -192,6 +193,8 @@ POST /agent/report
 | Usuarios | `users.manage` | Dos pestañas (**Usuarios** / **Roles**), búsqueda en el cliente por nombre o usuario, alta detrás de un botón y edición de nombre/usuario/estado, cambio de clave y roles con guardado explícito. En **Roles** se crean, renombran y eliminan roles y se editan sus permisos; el rol `admin` no se puede borrar ni perder `users.manage`, y un rol asignado no se borra. El rol de la cuenta `admin` está bloqueado |
 
 Además, las sedes y balanzas se pueden eliminar, y los usuarios se pueden editar, cambiar de clave o eliminar; toda acción destructiva pide confirmación y se valida también en la API.
+
+Limitación de la exportación `.Txp`: `pack_weight` y las columnas 11-25 no se almacenan, así que el archivo exportado las normaliza a cero; los nombres se exportan sin espacios sobrantes.
 
 Responsive: menú lateral deslizable bajo 900 px, columnas secundarias ocultas bajo
 720 px, modales a pantalla completa y menú "Acción ▾" por fila en móvil. En esa
@@ -222,7 +225,7 @@ node --test packages/plu-format/test/plu-format.test.js `
                apps/web/test/barcode.test.js
 ```
 
-**85 tests, todos verdes.** Incluyen:
+**93 tests, todos verdes.** Incluyen:
 
 - Golden byte-a-byte de los **832 registros** y de **todas las tramas de control**
   contra las capturas reales (fixture inmutable `test/fixtures/plu-832-original.txp`).

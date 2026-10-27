@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { openDatabase } from '../src/db.js';
 import { createApp } from '../src/app.js';
 import { ensureFirstUser } from '../src/bootstrap.js';
+import { parseTxpText } from '../../../packages/plu-format/src/index.js';
 
 let server;
 let base;
@@ -277,5 +278,61 @@ test('an article created from the web reaches the scale payload on publish', asy
   assert.equal(pushed.priceCents, 250);
 
   await api(`/api/articles/${article.id}`, { method: 'DELETE' });
+});
+
+test('the article master exports as a .Txp with the published catalogue', async () => {
+  db.run(
+    `INSERT INTO articles (barcode, name, lf_code, plu_number, price_cents, unit_code, department,
+       validity_days, package_type, barcode_type, active, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+    19001, 'INACTIVO', 950, 0, 100, 4, 21, 30, 0, 7, new Date().toISOString(),
+  );
+
+  try {
+    const guide = await (await api('/api/articles')).json();
+
+    const anonymous = await fetch(`${base}/api/articles/export`);
+    assert.equal(anonymous.status, 401);
+
+    const res = await api('/api/articles/export');
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /text\/plain/);
+    assert.match(res.headers.get('content-disposition'), /maestro-balanza-\d{8}\.txp/);
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+
+    const body = await res.text();
+    assert.equal(body.startsWith('\uFEFF'), false, 'the export must not include a BOM');
+    const rows = parseTxpText(body);
+    assert.equal(rows.length, guide.articles.length);
+    assert.equal(rows[0].barcode, guide.articles[0].barcode);
+    assert.equal(rows.some((row) => row.barcode === 19001), false, 'inactive articles must not leak');
+    assert.ok(rows.every((row) => row.raw.length === 26));
+  } finally {
+    db.run('DELETE FROM articles WHERE barcode = ?', 19001);
+  }
+});
+
+test('exporting the master requires articles.read', async () => {
+  const roleRes = await api('/api/roles', {
+    method: 'POST',
+    body: { name: 'Solo sedes', permissions: ['sedes.read'] },
+  });
+  assert.equal(roleRes.status, 201);
+  const role = await roleRes.json();
+
+  const userRes = await api('/api/users', {
+    method: 'POST',
+    body: {
+      username: 'solo-sedes',
+      name: 'Solo Sedes',
+      password: 'solo-sedes-123',
+      roles: [role.key],
+    },
+  });
+  assert.equal(userRes.status, 201);
+
+  const token = await login('solo-sedes', 'solo-sedes-123');
+  const res = await api('/api/articles/export', { token });
+  assert.equal(res.status, 403);
 });
 

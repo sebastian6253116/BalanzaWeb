@@ -1,5 +1,5 @@
 export { encodeBcd, decodeBcd, encodeBcdByte, decodeBcdByte } from './bcd.js';
-export { parseTxpText, parseTxpFile, serializeTxp, COLUMN, EXPECTED_COLUMNS } from './txp.js';
+export { parseTxpText, parseTxpFile, serializeTxp, toTxpText, COLUMN, EXPECTED_COLUMNS } from './txp.js';
 export { buildRecord, parseRecord, RECORD_SIZE, NAME_FIELD_SIZE } from './record.js';
 import { buildRecord } from './record.js';
 export {

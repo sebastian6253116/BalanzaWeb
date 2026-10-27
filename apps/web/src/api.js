@@ -30,4 +30,41 @@ export async function api(path, { method = 'GET', body } = {}) {
   return data;
 }
 
+function attachmentName(header) {
+  if (!header) return null;
+  const match = /filename="?([^";]+)"?/i.exec(header);
+  return match ? match[1].trim() : null;
+}
+
+export async function download(path, fallbackName) {
+  const headers = {};
+  const token = getToken();
+  if (token) headers.authorization = `Bearer ${token}`;
+
+  const response = await fetch(`/api${path}`, { headers });
+  if (!response.ok) {
+    let data = null;
+    try {
+      data = JSON.parse(await response.text());
+    } catch {
+      data = null;
+    }
+    throw new ApiError(data?.error ?? `HTTP ${response.status}`, response.status, data);
+  }
+
+  const blob = await response.blob();
+  const filename = attachmentName(response.headers.get('content-disposition')) ?? fallbackName;
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  }
+}
+
 export const money = (cents) => (cents / 100).toFixed(2);

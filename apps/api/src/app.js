@@ -21,7 +21,7 @@ import {
   verifyPassword,
 } from './auth.js';
 import { PERMISSIONS, PERMISSION_KEYS } from './permissions.js';
-import { WEIGHT_UNITS, validateRows } from '../../../packages/plu-format/src/index.js';
+import { WEIGHT_UNITS, toTxpText, validateRows } from '../../../packages/plu-format/src/index.js';
 
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
 
@@ -58,6 +58,12 @@ function isApiPath(pathname) {
   );
 }
 
+/** YYYYMMDD in the server's local timezone, used in the export filename. */
+function localDateStamp(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
+}
+
 export function createApp({
   db,
   pairingTtlMinutes = 15,
@@ -77,6 +83,16 @@ export function createApp({
       'content-length': Buffer.byteLength(payload),
     });
     res.end(payload);
+  };
+
+  const attachment = (res, text, filename) => {
+    const body = Buffer.from(text, 'ascii');
+    res.writeHead(200, {
+      'content-type': 'text/plain; charset=us-ascii',
+      'content-length': body.length,
+      'content-disposition': `attachment; filename="${filename}"`,
+    });
+    res.end(body);
   };
 
   const notModified = (res) => {
@@ -427,6 +443,13 @@ export function createApp({
       pattern: /^\/api\/articles$/,
       permission: 'articles.read',
       handler: async (req, res) => json(res, 200, { articles: activeArticles() }),
+    },
+    {
+      method: 'GET',
+      pattern: /^\/api\/articles\/export$/,
+      permission: 'articles.read',
+      handler: async (req, res) =>
+        attachment(res, toTxpText(activeArticles()), `maestro-balanza-${localDateStamp()}.txp`),
     },
     {
       method: 'GET',

@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, money } from '../api.js';
+import { api, download, money } from '../api.js';
 
 const PAGE_SIZES = [10, 30, 50, 100];
 
@@ -17,6 +17,7 @@ const emptyForm = {
 };
 
 export default function Articles({ user }) {
+  const canRead = user.permissions.includes('articles.read');
   const canWrite = user.permissions.includes('articles.write');
 
   const [articles, setArticles] = useState([]);
@@ -30,6 +31,7 @@ export default function Articles({ user }) {
   const [errors, setErrors] = useState([]);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState(null);
   const [menu, setMenu] = useState(null);
   const [searching, setSearching] = useState(false);
@@ -92,6 +94,22 @@ export default function Articles({ user }) {
   const visible = filtered.slice(start, start + pageSize);
   const from = filtered.length === 0 ? 0 : start + 1;
   const to = Math.min(start + pageSize, filtered.length);
+
+  async function exportCatalog() {
+    setError(null);
+    setNotice(null);
+    setExporting(true);
+    const today = new Date();
+    const pad = (value) => String(value).padStart(2, '0');
+    const stamp = `${today.getFullYear()}${pad(today.getMonth() + 1)}${pad(today.getDate())}`;
+    try {
+      await download('/articles/export', `maestro-balanza-${stamp}.txp`);
+    } catch (err) {
+      setError(`No se pudo exportar el maestro: ${err.message}`);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function startCreate() {
     setError(null);
@@ -211,9 +229,14 @@ export default function Articles({ user }) {
             </div>
             {searching && <span className="search-hint">Buscando…</span>}
           </div>
-          {canWrite && (
-            <div className="tight">
-              <button onClick={startCreate}>Nuevo artículo</button>
+          {(canRead || canWrite) && (
+            <div className="tight" style={{ display: 'flex', gap: 8 }}>
+              {canRead && (
+                <button className="ghost" onClick={exportCatalog} disabled={exporting}>
+                  {exporting ? 'Exportando…' : 'Exportar maestro (.Txp)'}
+                </button>
+              )}
+              {canWrite && <button onClick={startCreate}>Nuevo artículo</button>}
             </div>
           )}
         </div>
