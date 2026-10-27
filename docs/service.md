@@ -226,6 +226,9 @@ Get-Content -Encoding UTF8 "$env:ProgramData\BalanzaWeb\Agent\logs\agent.log" -T
 
 # Versión instalada en esa PC
 & "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" version
+
+# ¿Esta balanza contesta el saludo del protocolo?
+& "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" probe --host 192.168.0.200
 ```
 
 El servicio debe figurar `Running`. El log debe mostrar `agent starting` y,

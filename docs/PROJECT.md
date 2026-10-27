@@ -167,6 +167,10 @@ POST /agent/report
 - `version` imprime `balanza-agent <version>`. La versión sale de
   `apps/agent/package.json` y queda embebida en el SEA, así que el ejecutable la
   reporta sin necesitar Node.
+- `probe --host <ip>` manda el `hello` del protocolo y reporta modelo, tamaño de la
+  respuesta y latencia. Sirve para separar "la balanza no está en la red" de "el
+  protocolo falla", sin Node en la sede. `--port`, `--timeout` y `--retries` son
+  opcionales.
 - En una instalación nueva sin `-ApiUrl` ni `-PairingCode`, `install.ps1` abre la
   ventana **BalanzaWeb - Conectar agente** (`configurar-agente.ps1`), salvo con
   `-Quiet` o sin sesión interactiva, donde deja el aviso en consola. Si ya existe
@@ -256,7 +260,7 @@ node --test packages/plu-format/test/plu-format.test.js `
    autofirmado no es de confianza en otras PC y agrava la operación. La decisión de
    comprar un certificado real queda pendiente.
 10. **La versión del agente es independiente de la web y del API**: la fuente es
-    `apps/agent/package.json` (hoy `1.0.0`) y el tag de release es
+    `apps/agent/package.json` (hoy `1.0.1`) y el tag de release es
     `agent-v<version>`. La web y el API pueden avanzar sin volver a publicar el
     agente, y viceversa.
 

@@ -72,21 +72,21 @@ administra el sistema. Cómo se genera y publica una versión nueva está en
 
 - Página de releases:
   <https://github.com/sebastian6253116/BalanzaWeb/releases>
-- Release de la versión 1.0.0:
-  <https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.0>
+- Release de la versión 1.0.1:
+  <https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.1>
 - Descarga directa del paquete:
-  <https://github.com/sebastian6253116/BalanzaWeb/releases/download/agent-v1.0.0/balanza-agent-1.0.0-win-x64.zip>
+  <https://github.com/sebastian6253116/BalanzaWeb/releases/download/agent-v1.0.1/balanza-agent-1.0.1-win-x64.zip>
 
-Para 1.0.0 el paquete es un único archivo:
+Para 1.0.1 el paquete es un único archivo:
 
 ```
-balanza-agent-1.0.0-win-x64.zip
+balanza-agent-1.0.1-win-x64.zip
 ```
 
 Su SHA-256 de referencia es:
 
 ```
-3DA2B5FD7B49366A971D70CE2F8E6514A706F2AB1A6D46B41FFE73EA68397483
+BE7EDE6E2C430C5DF757183ECDFCFF1290854D32060D3636BB26ABA83688B971
 ```
 
 **Verificación de integridad.** El zip se entrega junto con su SHA-256, que es el
@@ -94,14 +94,14 @@ valor que imprime `npm run agent:package` al generarlo (línea `sha256: ...`). E
 PC de la sede, en la carpeta donde está el zip:
 
 ```powershell
-Get-FileHash .\balanza-agent-1.0.0-win-x64.zip -Algorithm SHA256
+Get-FileHash .\balanza-agent-1.0.1-win-x64.zip -Algorithm SHA256
 ```
 
 El campo `Hash` tiene que coincidir **exactamente** con el valor de referencia. Si
 no coincide, el archivo llegó incompleto o fue alterado: no lo instale y pida el
 paquete de nuevo.
 
-> El hash de arriba es el del zip 1.0.0 publicado. Si se regenera el zip, aunque la
+> El hash de arriba es el del zip 1.0.1 publicado. Si se regenera el zip, aunque la
 > versión sea la misma, el hash cambia: hay que usar el que imprimió
 > `npm run agent:package` y quedó anotado en la release.
 
@@ -117,13 +117,13 @@ paquete de nuevo.
 - Si el zip descargado quedó bloqueado y el script no arranca, desbloquéelo:
 
   ```powershell
-  Unblock-File .\balanza-agent-1.0.0-win-x64.zip
+  Unblock-File .\balanza-agent-1.0.1-win-x64.zip
   ```
 
 ## 5. Paso 2 — instalar el servicio
 
 1. Descomprima el zip en una carpeta local, por ejemplo `C:\Instaladores\`. Windows
-   crea la carpeta `balanza-agent-1.0.0-win-x64` con todo el contenido plano:
+   crea la carpeta `balanza-agent-1.0.1-win-x64` con todo el contenido plano:
 
    ```
    balanza-agent.exe
@@ -145,7 +145,7 @@ paquete de nuevo.
 3. Ubíquese en la carpeta extraída (ajuste la ruta a la suya):
 
    ```powershell
-   Set-Location "C:\Instaladores\balanza-agent-1.0.0-win-x64"
+   Set-Location "C:\Instaladores\balanza-agent-1.0.1-win-x64"
    ```
 
 4. Confirme que están los archivos antes de ejecutar:
@@ -309,7 +309,7 @@ publicaciones todavía.
 & "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" version
 ```
 
-Esperado: `balanza-agent 1.0.0`. Si alguna vez hay que soportar esa PC, este es el
+Esperado: `balanza-agent 1.0.1`. Si alguna vez hay que soportar esa PC, este es el
 dato que hay que pedir: no hay otra forma de saber qué versión corre una vez
 instalada.
 
@@ -423,6 +423,47 @@ Consecuencias de reconectar:
 | El servicio no arranca (error 1053 o `Stopped` apenas se inicia) | Falta .NET Framework 4.8, rutas del XML inválidas, o el ejecutable está bloqueado/dañado. | Revisar `%ProgramData%\BalanzaWeb\Agent\logs\winsw\`, el XML, y probar `balanza-agent.exe status` a mano. |
 | El servicio corre pero el log muestra `FAILED - hello: no acknowledgement after 3 attempt(s)` | La balanza no responde: IP o puerto mal cargados, firewall, o la PC no está en la red local de la balanza. | Verificar `IP:PUERTO` en **Sedes y balanzas** (UDP **5001**), que la PC esté en la misma LAN y que nada bloquee el UDP saliente hacia la balanza. |
 | Aparece `El agente quedó enrolado, pero no se pudo reiniciar el servicio: ...` | La ventana se ejecutó sin permisos de administrador. | Abrir PowerShell como administrador y ejecutar `Restart-Service BalanzaWebAgent`. |
+
+### 11.1 Diagnosticar una balanza que no responde (comando `probe`)
+
+Cuando en **Estado** una balanza muestra `error: hello: no acknowledgement after 3
+attempt(s)`, la transferencia no llegó a empezar: el agente manda el saludo del
+protocolo y la balanza no contesta. En el historial esas filas tienen **Registros**
+y **Tramas** en `—`, así que no se escribió nada en la balanza.
+
+Para saber si el problema es de red o del equipo, desde la PC de la sede:
+
+```powershell
+& "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" probe --host 192.168.0.203
+```
+
+Parámetros opcionales: `--port` (por defecto `5001`), `--timeout` en milisegundos
+(`1000`) y `--retries` (`2`).
+
+**Si contesta**, el equipo y la red están bien:
+
+```
+hello reply from 192.168.0.203:5001 in 34 ms
+model: RONGTA_PV2.0
+reply: 263 bytes
+```
+
+**Si no contesta**, imprime `error: hello: no acknowledgement after N attempt(s)` y
+una pista. El orden de descarte es:
+
+1. `ping 192.168.0.203` — si no responde, la balanza está apagada, desconectada o
+   cambió de IP. Es la causa más frecuente.
+2. Revisar en el menú de la balanza que su IP coincida con la que figura en **Sedes
+   y balanzas**.
+3. `arp -a | findstr 192.168.0.203` — si no aparece la MAC, no hay respuesta en la
+   capa de red.
+4. Cerrar cualquier software del fabricante que esté apuntando a esa balanza: algunas
+   atienden una sola sesión y dejan de responder al saludo.
+5. Reiniciar la balanza (apagar y encender) para liberar una sesión colgada.
+
+No hace falta tocar la web: el agente reintenta en cada ciclo y, cuando la balanza
+vuelve a contestar, la revisión avanza sola. Las balanzas que ya estaban al día no
+reciben el catálogo de nuevo: se saltean por hash.
 
 ## 12. Actualizar el agente a una versión nueva
 
@@ -588,8 +629,8 @@ npm run agent:package
 `npm run agent:package` imprime al final:
 
 ```
-package: ...\apps\agent\dist\package\balanza-agent-1.0.0-win-x64
-zip:     ...\apps\agent\dist\balanza-agent-1.0.0-win-x64.zip
+package: ...\apps\agent\dist\package\balanza-agent-1.0.1-win-x64
+zip:     ...\apps\agent\dist\balanza-agent-1.0.1-win-x64.zip
 size:    N MB
 sha256:  <hash que se entrega con el zip>
 ```

@@ -5,8 +5,8 @@ agente a una sede. Cubre el build, el empaquetado, la verificación y la publica
 del artefacto. El procedimiento del lado de la sede está en
 [`instalacion-sede.md`](instalacion-sede.md).
 
-**Estado:** la versión 1.0.0 está publicada en
-<https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.0>.
+**Estado:** la versión 1.0.1 está publicada en
+<https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.1>.
 
 ## 1. Por qué el binario no está en git
 
@@ -100,8 +100,8 @@ No alcanza con que el build termine: hay que ejecutar el binario extraído del
 paquete en una carpeta temporal.
 
 ```powershell
-Expand-Archive .\balanza-agent-1.0.0-win-x64.zip -DestinationPath .\prueba
-Set-Location .\prueba\balanza-agent-1.0.0-win-x64
+Expand-Archive .\balanza-agent-1.0.1-win-x64.zip -DestinationPath .\prueba
+Set-Location .\prueba\balanza-agent-1.0.1-win-x64
 
 # Aislar la configuración para no leer la de una instalación real
 $env:BALANZA_AGENT_HOME = Join-Path $env:TEMP 'balanza-release-check'
@@ -114,8 +114,8 @@ Remove-Item Env:BALANZA_AGENT_HOME
 
 Resultados esperados:
 
-- `version` imprime `balanza-agent <version>`. Para 1.0.0:
-  `balanza-agent 1.0.0`.
+- `version` imprime `balanza-agent <version>`. Para 1.0.1:
+  `balanza-agent 1.0.1`.
 - `status` imprime la ruta de configuración, la carpeta de logs y, sin
   configuración previa, `no configuration at ...`. Si esa PC ya tiene un agente
   instalado, la variable `BALANZA_AGENT_HOME` evita leer su token.
@@ -125,7 +125,7 @@ máquina tenga Node instalado.
 
 ## 5. Publicar
 
-El tag de release sigue la forma `agent-v<version>`, por ejemplo `agent-v1.0.0`.
+El tag de release sigue la forma `agent-v<version>`, por ejemplo `agent-v1.0.1`.
 El zip se adjunta como asset de esa release.
 
 ### 5.1 Desde la interfaz web de GitHub
@@ -133,18 +133,18 @@ El zip se adjunta como asset de esa release.
 1. Abrir el repositorio y entrar en **Releases**.
 2. Presionar **Draft a new release**.
 3. En **Choose a tag**, escribir `agent-v<version>` y crear el tag sobre `main`.
-4. Completar el título, por ejemplo `Agente 1.0.0`.
-5. Adjuntar `apps/agent/dist/balanza-agent-1.0.0-win-x64.zip`.
+4. Completar el título, por ejemplo `Agente 1.0.1`.
+5. Adjuntar `apps/agent/dist/balanza-agent-1.0.1-win-x64.zip`.
 6. Pegar el SHA-256 en la descripción, junto con un resumen de los cambios.
 7. Publicar la release.
 
 ### 5.2 Con `gh` instalado
 
 ```powershell
-gh release create agent-v1.0.0 `
-  "apps\agent\dist\balanza-agent-1.0.0-win-x64.zip" `
-  --title "Agente 1.0.0" `
-  --notes "SHA-256: 3DA2B5FD7B49366A971D70CE2F8E6514A706F2AB1A6D46B41FFE73EA68397483"
+gh release create agent-v1.0.1 `
+  "apps\agent\dist\balanza-agent-1.0.1-win-x64.zip" `
+  --title "Agente 1.0.1" `
+  --notes "SHA-256: BE7EDE6E2C430C5DF757183ECDFCFF1290854D32060D3636BB26ABA83688B971"
 ```
 
 `gh` **no está instalado en la máquina actual**, así que hoy el camino disponible
@@ -155,14 +155,14 @@ También se puede publicar con la API de GitHub, sin `gh`:
 
 ```powershell
 # Requiere un token con scope repo en la variable GITHUB_TOKEN
-$sha = (Get-FileHash apps\agent\dist\balanza-agent-1.0.0-win-x64.zip).Hash.ToLower()
-$json = @{ tag_name = 'agent-v1.0.0'; target_commitish = 'main'; name = 'Agente BalanzaWeb 1.0.0'; body = "SHA-256: $sha" } | ConvertTo-Json
+$sha = (Get-FileHash apps\agent\dist\balanza-agent-1.0.1-win-x64.zip).Hash.ToLower()
+$json = @{ tag_name = 'agent-v1.0.1'; target_commitish = 'main'; name = 'Agente BalanzaWeb 1.0.1'; body = "SHA-256: $sha" } | ConvertTo-Json
 $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/sebastian6253116/BalanzaWeb/releases' `
   -Method Post -Headers @{ Authorization = "token $env:GITHUB_TOKEN" } `
   -ContentType 'application/json' -Body ([System.Text.Encoding]::UTF8.GetBytes($json))
 curl.exe -X POST -H "Authorization: token $env:GITHUB_TOKEN" -H "Content-Type: application/zip" `
-  --data-binary "@apps\agent\dist\balanza-agent-1.0.0-win-x64.zip" `
-  "https://uploads.github.com/repos/sebastian6253116/BalanzaWeb/releases/$($release.id)/assets?name=balanza-agent-1.0.0-win-x64.zip"
+  --data-binary "@apps\agent\dist\balanza-agent-1.0.1-win-x64.zip" `
+  "https://uploads.github.com/repos/sebastian6253116/BalanzaWeb/releases/$($release.id)/assets?name=balanza-agent-1.0.1-win-x64.zip"
 ```
 
 > El `Body` se manda como bytes UTF-8 a propósito: en PowerShell 5.1 un string con
@@ -176,7 +176,7 @@ el hash local, que es la prueba de que el archivo publicado son exactamente los 
 que se compilaron:
 
 ```powershell
-$r = Invoke-RestMethod 'https://api.github.com/repos/sebastian6253116/BalanzaWeb/releases/tags/agent-v1.0.0'
+$r = Invoke-RestMethod 'https://api.github.com/repos/sebastian6253116/BalanzaWeb/releases/tags/agent-v1.0.1'
 $r.assets | Select-Object name, size, state, digest
 ```
 
@@ -193,14 +193,14 @@ versión del ejecutable no prueba integridad: un zip distinto puede contener la
 misma versión. En la PC de la sede, antes de descomprimir:
 
 ```powershell
-Get-FileHash .\balanza-agent-1.0.0-win-x64.zip -Algorithm SHA256
+Get-FileHash .\balanza-agent-1.0.1-win-x64.zip -Algorithm SHA256
 ```
 
 El campo `Hash` tiene que coincidir exactamente con el publicado. El SHA-256 de
-1.0.0 es:
+1.0.1 es:
 
 ```
-3DA2B5FD7B49366A971D70CE2F8E6514A706F2AB1A6D46B41FFE73EA68397483
+BE7EDE6E2C430C5DF757183ECDFCFF1290854D32060D3636BB26ABA83688B971
 ```
 
 Si se vuelve a empaquetar la misma versión, el zip cambia y el hash también:

@@ -7,6 +7,7 @@
  *   balanza-agent once
  *   balanza-agent request-stop
  *   balanza-agent status
+ *   balanza-agent probe --host <ip> [--port 5001]
  *   balanza-agent version
  *
  * No third-party runtime: the agent is plain Node plus the shared protocol packages.
@@ -18,7 +19,7 @@ import { loadConfig, saveConfig, defaultConfigPath, emptyState } from './config.
 import { defaultLogDir, stopFlagPath, pidPath, legacyConfigPath } from './paths.js';
 import { createLogger, installCrashHandlers } from './log.js';
 import { syncOnce } from './sync.js';
-import { pushPlu } from '../../../packages/scale-client/src/index.js';
+import { probeScale, pushPlu } from '../../../packages/scale-client/src/index.js';
 import pkg from '../package.json' with { type: 'json' };
 
 const stamp = () => new Date().toISOString();
@@ -172,6 +173,39 @@ async function requestStop() {
   console.log('stop requested');
 }
 
+const PROBE_HINT =
+  'hint: the scale did not answer the hello frame. Check power, network and whether another program is holding the session.';
+
+function positiveNumber(flags, key, fallback) {
+  const raw = flags[key];
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (raw === true || !Number.isFinite(value) || value <= 0) throw new Error(`invalid --${key}: ${raw}`);
+  return value;
+}
+
+async function probe(flags) {
+  const host = flags.host ?? flags.ip;
+  if (!host || host === true) throw new Error('probe requires --host <scale-ip>');
+
+  const port = positiveNumber(flags, 'port', 5001);
+  const timeout = positiveNumber(flags, 'timeout', 1000);
+  const retries = positiveNumber(flags, 'retries', 2);
+
+  let result;
+  try {
+    result = await probeScale({ host, port, timeoutMs: timeout, retries });
+  } catch (err) {
+    // Attach instead of printing: main() prints the error first, then the hint.
+    err.hint = PROBE_HINT;
+    throw err;
+  }
+
+  console.log(`hello reply from ${host}:${port} in ${result.ms} ms`);
+  console.log(`model: ${result.model}`);
+  console.log(`reply: ${result.replyLength} bytes`);
+}
+
 async function status(flags) {
   const path = flags.config ?? defaultConfigPath();
   console.log(`config:        ${path}`);
@@ -223,6 +257,9 @@ async function main() {
       case 'request-stop':
         await requestStop();
         break;
+      case 'probe':
+        await probe(flags);
+        break;
       case 'status':
         await status(flags);
         break;
@@ -230,11 +267,12 @@ async function main() {
         console.log(`balanza-agent ${pkg.version}`);
         break;
       default:
-        console.log('usage: balanza-agent enroll --api <url> --code <code> | run | once | request-stop | status | version');
+        console.log('usage: balanza-agent enroll --api <url> --code <code> | run | once | request-stop | status | probe --host <ip> | version');
         process.exitCode = 2;
     }
   } catch (err) {
     console.error(`error: ${err.message}`);
+    if (err.hint) console.error(err.hint);
     process.exitCode = 1;
   }
 }

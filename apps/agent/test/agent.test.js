@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import dgram from 'node:dgram';
 import { fileURLToPath } from 'node:url';
 
 import { syncOnce, hashRecords } from '../src/sync.js';
@@ -135,6 +136,93 @@ test('the remote poll interval applies unless a local override is set', async ()
   override.pollIntervalSeconds = 300;
   await syncOnce({ config: override, fetchImpl: fakeFetch({ payload: payload(2) }), push: pushOk, persist: () => {} });
   assert.equal(override.pollIntervalSeconds, 300);
+});
+
+async function startFakeScale() {
+  const socket = dgram.createSocket('udp4');
+  socket.on('message', (msg, rinfo) => {
+    const isHello = msg.length > 1 && msg[0] === 0x0e && msg[1] === 0x01;
+    if (!isHello) return;
+    const reply = Buffer.concat([Buffer.from([0x0e, 0x01, 0x00]), Buffer.from('RONGTA_PV2.0\0', 'latin1')]);
+    socket.send(reply, rinfo.port, rinfo.address);
+  });
+  await new Promise((resolve) => socket.bind(0, '127.0.0.1', resolve));
+  return {
+    port: socket.address().port,
+    close: () => new Promise((resolve) => socket.close(resolve)),
+  };
+}
+
+async function unusedPort() {
+  const socket = dgram.createSocket('udp4');
+  await new Promise((resolve) => socket.bind(0, '127.0.0.1', resolve));
+  const port = socket.address().port;
+  await new Promise((resolve) => socket.close(resolve));
+  return port;
+}
+
+function tempAgentHome(prefix) {
+  const home = mkdtempSync(join(tmpdir(), prefix));
+  const env = { ...process.env, BALANZA_AGENT_HOME: home };
+  delete env.BALANZA_AGENT_CONFIG;
+  delete env.BALANZA_AGENT_LOG_DIR;
+  return { home, env };
+}
+
+function runAgent(args, env) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [agentScript, ...args], { env });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+test('probe reports the scale model when the hello is acknowledged', async () => {
+  const { home, env } = tempAgentHome('balanza-probe-ok-');
+  const scale = await startFakeScale();
+
+  try {
+    const run = await runAgent(['probe', '--host', '127.0.0.1', '--port', String(scale.port)], env);
+    assert.equal(run.status, 0, `probe failed: ${run.stderr}`);
+    assert.match(run.stdout, /RONGTA_PV2\.0/);
+    assert.match(run.stdout, new RegExp(`hello reply from 127\\.0\\.0\\.1:${scale.port}`));
+  } finally {
+    await scale.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('probe fails with a hint when nothing answers the hello', async () => {
+  const { home, env } = tempAgentHome('balanza-probe-down-');
+  const port = await unusedPort();
+
+  try {
+    const run = await runAgent(
+      ['probe', '--host', '127.0.0.1', '--port', String(port), '--timeout', '100', '--retries', '1'],
+      env,
+    );
+    assert.equal(run.status, 1);
+    assert.match(run.stderr, /no acknowledgement/);
+    assert.match(run.stderr, /hint: the scale did not answer the hello frame/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('probe without a host fails with a clear message', () => {
+  const { home, env } = tempAgentHome('balanza-probe-nohost-');
+
+  try {
+    const run = spawnSync(process.execPath, [agentScript, 'probe'], { env, encoding: 'utf8' });
+    assert.equal(run.status, 1);
+    assert.match(run.stderr, /probe requires --host/);
+    assert.doesNotMatch(run.stderr, /hint:/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('version prints the package version and the usage line lists it', () => {
