@@ -353,6 +353,108 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .search-hint { display: block; font-size: 12px; color: var(--muted); margin-top: 6px; }
 tbody.is-loading { opacity: 0.4; transition: opacity 0.15s ease; }
 
+/* ---------- users screen: tabs, toolbar, role cards ---------- */
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 16px;
+}
+.tabs button {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 9px 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.tabs button:hover:not(:disabled) { background: #eef2f6; color: var(--brand); border-color: transparent; }
+.tabs button.active { color: var(--brand); border-bottom-color: var(--brand); }
+.tabs .badge { font-size: 11px; }
+
+.toolbar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
+.toolbar > .toolbar-search { flex: 1 1 260px; min-width: 0; }
+.toolbar > .toolbar-note { flex: 1 1 260px; min-width: 0; font-size: 12.5px; padding-bottom: 10px; }
+.toolbar > button { flex: 0 0 auto; }
+
+.row-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.table-cards .cell-body { flex: 1 1 auto; min-width: 0; }
+
+.table-wrap { overflow-x: auto; }
+.table-cards { border-collapse: collapse; }
+
+.role-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.role-card-head { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.role-card-title { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.role-card-title strong { font-size: 14.5px; }
+.role-card-title .mono { font-size: 12px; }
+.role-card-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+.role-rename { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-top: 12px; }
+.role-rename-field { flex: 1 1 240px; min-width: 0; }
+.role-rename-actions { display: flex; gap: 8px; }
+.role-hint { font-size: 12px; margin-top: 8px; }
+.role-card-foot {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.perm-matrix { margin-top: 12px; }
+.perm-section { margin-top: 12px; }
+.perm-section:first-child { margin-top: 0; }
+.perm-section-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.perm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.perm-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 12.5px;
+  cursor: pointer;
+  min-width: 0;
+}
+.perm-chip:hover { border-color: #bcd9ee; background: #f7fafc; }
+.perm-chip input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--brand);
+}
+.perm-chip .perm-label { flex: 1 1 auto; min-width: 0; line-height: 1.25; }
+.perm-chip .perm-key { flex: 0 0 auto; font-size: 10.5px; color: var(--muted); }
+.perm-chip.checked { border-color: var(--brand); background: #eaf3fa; }
+.perm-chip.checked .perm-key { color: var(--brand-dark); }
+
 /* ---------- responsive ---------- */
 @media (max-width: 1024px) {
   .main { padding: 22px 20px; }
@@ -407,6 +509,52 @@ tbody.is-loading { opacity: 0.4; transition: opacity 0.15s ease; }
   .desk-actions { display: none; }
   .mob-actions { display: flex; justify-content: flex-end; }
   table { min-width: 400px; }
+
+  .table-cards { min-width: 0; }
+  .table-cards thead { display: none; }
+  .table-cards,
+  .table-cards tbody,
+  .table-cards tr,
+  .table-cards td { display: block; width: 100%; }
+  .table-cards tbody tr {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #fff;
+    margin-bottom: 12px;
+    padding: 4px;
+    overflow: hidden;
+  }
+  .table-cards tbody tr:hover { background: #fff; }
+  .table-cards td {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    border-bottom: 1px solid var(--line);
+    padding: 8px 10px;
+  }
+  .table-cards td:last-child { border-bottom: 0; }
+  .table-cards td::before {
+    content: attr(data-label);
+    flex: 0 0 38%;
+    max-width: 140px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .table-cards td.actions-col { display: block; white-space: normal; }
+  .table-cards td.actions-col::before { display: block; margin-bottom: 6px; }
+  .table-cards td.actions-col .row-actions { justify-content: flex-start; }
+  .table-cards td:not([data-label]) { display: block; }
+  .table-cards td:not([data-label])::before { display: none; }
+
+  .perm-grid { grid-template-columns: 1fr; }
+  .role-card-actions { justify-content: flex-start; width: 100%; }
+  .role-card-foot button { flex: 1 1 auto; }
+  .toolbar { align-items: stretch; }
+  .toolbar > button { flex: 1 1 auto; }
+
   .pagination { justify-content: center; padding: 12px 10px; }
   .pagination-info { width: 100%; text-align: center; }
   .pagination-controls { justify-content: center; }
@@ -425,4 +573,5 @@ tbody.is-loading { opacity: 0.4; transition: opacity 0.15s ease; }
   .auth-form h2 { font-size: 20px; }
   .main { padding: 14px 12px 36px; }
   .panel { padding: 12px; border-radius: 8px; }
+  .role-card { padding: 12px; }
 }
