@@ -23,6 +23,7 @@ docs/captures/*.pcapng
 
 # Local tooling and OS files
 .atl/
+.codegraph/
 Thumbs.db
 Desktop.ini
 .vscode/

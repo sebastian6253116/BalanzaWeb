@@ -144,7 +144,9 @@ POST /agent/report
 
 ## 5. Agente local
 
-- `enroll` guarda la config en `data/agent.config.json` (token + revisión + hashes).
+- `enroll` guarda la config en `%ProgramData%\BalanzaWeb\Agent\config\agent.config.json`
+  (token + revisión + hashes). `BALANZA_AGENT_HOME` cambia la raíz; `./data/agent.config.json`
+  es la ruta heredada de desarrollo fuera de Windows.
 - `run` consulta cada N segundos. **Si la respuesta es 304 no hace nada.**
 - Al recibir una revisión: arma los registros **localmente**, calcula el hash y
   **solo envía a las balanzas cuyo contenido cambió**.
@@ -188,10 +190,11 @@ Para pasar a MySQL en el VPS alcanza con reimplementar los cuatro métodos de
 node --test packages/plu-format/test/plu-format.test.js `
                packages/scale-client/test/scale-client.test.js `
                apps/api/test/api.test.js apps/api/test/server.test.js `
+               apps/api/test/users-sedes.test.js `
                apps/agent/test/agent.test.js apps/agent/test/service.test.js
 ```
 
-**50 tests, todos verdes.** Incluyen:
+**67 tests, todos verdes.** Incluyen:
 
 - Golden byte-a-byte de los **832 registros** y de **todas las tramas de control**
   contra las capturas reales (fixture inmutable `test/fixtures/plu-832-original.txp`).

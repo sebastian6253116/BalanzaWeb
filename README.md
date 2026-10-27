@@ -71,6 +71,7 @@ datos del negocio.
 - [`docs/PROJECT.md`](docs/PROJECT.md): estado del proyecto, decisiones y pendientes.
 - [`docs/protocol.md`](docs/protocol.md): protocolo RLS1000 verificado contra hardware.
 - [`docs/service.md`](docs/service.md): agente como servicio de Windows.
+- [`docs/instalacion-sede.md`](docs/instalacion-sede.md): instalación del agente en la PC de una sede, paso a paso.
 - [`docs/deploy.md`](docs/deploy.md): despliegue con Dokploy, backups y operación.
 
 ## Datos que no forman parte del repositorio

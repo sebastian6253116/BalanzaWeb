@@ -75,6 +75,11 @@ temporal y exige el mensaje `no configuration`.
 
 ## 5. Instalación
 
+El procedimiento paso a paso para una sede (generar el código en la web, llevar el
+paquete, instalar, conectar y verificar) está en
+[`instalacion-sede.md`](instalacion-sede.md). Esta sección resume el empaquetado y
+los parámetros.
+
 Hay dos formas de instalar, según dónde esté el paquete.
 
 ### Desde el paquete de distribución (sede)
