@@ -70,8 +70,10 @@ El smoke test ejecuta `balanza-agent.exe status` con un directorio de datos
 temporal y exige el mensaje `no configuration`.
 
 > Al inyectar el blob se invalida la firma Authenticode original de `node.exe`.
-> Eso es esperado y no es un error: el ejecutable final debe firmarse antes de
-> distribuirlo (ver sección 10).
+> Eso es esperado y no es un error. Hoy el ejecutable final **no se firma**: no hay
+> certificado de firma de código, así que SmartScreen avisa si el zip se descargó de
+> internet. El paquete se entrega por USB o red interna para que no lleve
+> Mark-of-the-Web. Ver `agent-release.md` (sección 7) para el estado de la firma.
 
 ## 5. Instalación
 

@@ -66,10 +66,20 @@ usuario con el permiso `agents.manage` (el botón queda deshabilitado sin él).
 
 ## 4. Paso 1 — llevar el paquete a la PC
 
-El paquete es un único archivo:
+El paquete se obtiene de la página de releases del repositorio o lo entrega quien
+administra el sistema. Cómo se genera y publica una versión nueva está en
+[`agent-release.md`](agent-release.md).
+
+Para 1.0.0 el paquete es un único archivo:
 
 ```
 balanza-agent-1.0.0-win-x64.zip
+```
+
+Su SHA-256 de referencia es:
+
+```
+3DA2B5FD7B49366A971D70CE2F8E6514A706F2AB1A6D46B41FFE73EA68397483
 ```
 
 **Verificación de integridad.** El zip se entrega junto con su SHA-256, que es el
@@ -84,9 +94,9 @@ El campo `Hash` tiene que coincidir **exactamente** con el valor de referencia. 
 no coincide, el archivo llegó incompleto o fue alterado: no lo instale y pida el
 paquete de nuevo.
 
-> El hash cambia cada vez que se regenera el zip, aunque la versión sea la misma.
-> El valor de referencia siempre es el que imprimió el empaquetado de ese archivo,
-> no un valor fijo de esta guía.
+> El hash de arriba es el del zip 1.0.0 publicado. Si se regenera el zip, aunque la
+> versión sea la misma, el hash cambia: hay que usar el que imprimió
+> `npm run agent:package` y quedó anotado en la release.
 
 **El ejecutable no está firmado.** Por eso:
 
@@ -611,6 +621,7 @@ npm run e2e:pairing
 
 ---
 
-Documentos relacionados: [`service.md`](service.md) (empaquetado, arquitectura y
+Documentos relacionados: [`agent-release.md`](agent-release.md) (cómo se genera y
+publica una versión nueva), [`service.md`](service.md) (empaquetado, arquitectura y
 diagnóstico del servicio), [`PROJECT.md`](PROJECT.md) (estado del proyecto),
 [`protocol.md`](protocol.md) (protocolo RLS1000).

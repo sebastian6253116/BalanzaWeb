@@ -123,6 +123,13 @@ Autenticación en dos planos:
 
 Roles semilla: `admin` (todo), `operator` (maestro + publicar + lectura), `viewer` (lectura).
 
+Además de los roles semilla, se pueden crear roles propios con `POST /api/roles` (la
+clave se deriva del nombre si se omite), renombrarlos con `PATCH /api/roles/:key` y
+borrarlos con `DELETE /api/roles/:key`. El rol `admin` no se puede borrar (`422`) y
+debe conservar `users.manage`: `PUT /api/roles/:key/permissions` devuelve `422` si se
+lo quita. Un rol asignado a usuarios no se puede borrar (`409`). Los seeds `admin`,
+`operator` y `viewer` se recrean de forma idempotente y nunca tocan los roles propios.
+
 ### Endpoints principales
 
 ```
@@ -133,10 +140,11 @@ GET  /api/catalog                    GET /api/units
 GET/POST /api/sedes                  GET/POST /api/sedes/:id/scales
 DELETE /api/sedes/:id                DELETE /api/sedes/:id/scales/:scaleId
 POST /api/sedes/:id/pairing-code     POST /api/sedes/:id/deployments
-GET  /api/sedes/:id/status           GET/POST /api/users
-PATCH /api/users/:id                 DELETE /api/users/:id
+GET  /api/sedes/:id/status           POST /api/agents/:id/revoke
+GET/POST /api/users                  PATCH/DELETE /api/users/:id
 PUT  /api/users/:id/roles            PUT /api/users/:id/password
-GET  /api/roles                      PUT /api/roles/:key/permissions
+GET/POST /api/roles                  PATCH/DELETE /api/roles/:key
+PUT  /api/roles/:key/permissions
 --- agentes ---
 POST /agent/enroll                   GET /agent/sync?revision=N  (304 si no hay cambios)
 POST /agent/report
@@ -156,6 +164,17 @@ POST /agent/report
 - En producción corre como servicio Windows `BalanzaWebAgent`: binario único
   (Node SEA) + WinSW, datos en `%ProgramData%\BalanzaWeb\Agent`, log rotativo y
   parada ordenada con `request-stop`. Ver `docs/service.md`.
+- `version` imprime `balanza-agent <version>`. La versión sale de
+  `apps/agent/package.json` y queda embebida en el SEA, así que el ejecutable la
+  reporta sin necesitar Node.
+- En una instalación nueva sin `-ApiUrl` ni `-PairingCode`, `install.ps1` abre la
+  ventana **BalanzaWeb - Conectar agente** (`configurar-agente.ps1`), salvo con
+  `-Quiet` o sin sesión interactiva, donde deja el aviso en consola. Si ya existe
+  configuración, no la abre: imprime `Existing configuration found: the agent stays
+  enrolled, no window needed.`
+- Un agente revocado recibe `403 agent token revoked` en cada request; el servicio
+  sigue registrando `sync error: sync failed: HTTP 403` hasta que se vuelve a
+  enrolar con un código nuevo.
 
 ## 6. Web
 
@@ -164,13 +183,16 @@ POST /agent/report
 | Artículos | `articles.read` | Maestro con **paginado 10/30/50/100**, búsqueda progresiva con spinner, alta/edición con sugerencia de código libre y selector de las 13 unidades |
 | Sedes y balanzas | `sedes.read` | Alta y **baja** de sedes y balanzas (con confirmación), y código de autorización |
 | Publicar | `deployments.create` | Elige sede y destino (todas o balanzas puntuales) y crea la revisión |
-| Estado | `status.read` | Revisión publicada, resultado real por balanza y historial de envíos |
-| Usuarios | `users.manage` | Alta y **baja** de usuarios, edición de nombre/usuario/estado, cambio de clave y roles con guardado explícito. El rol de la cuenta `admin` está bloqueado |
+| Estado | `status.read` | Revisión publicada, resultado real por balanza, historial de envíos y **agentes de la sede**, que se pueden **revocar** con `agents.manage`; un agente revocado queda con la etiqueta `revocado` |
+| Usuarios | `users.manage` | Dos pestañas (**Usuarios** / **Roles**), búsqueda en el cliente por nombre o usuario, alta detrás de un botón y edición de nombre/usuario/estado, cambio de clave y roles con guardado explícito. En **Roles** se crean, renombran y eliminan roles y se editan sus permisos; el rol `admin` no se puede borrar ni perder `users.manage`, y un rol asignado no se borra. El rol de la cuenta `admin` está bloqueado |
 
 Además, las sedes y balanzas se pueden eliminar, y los usuarios se pueden editar, cambiar de clave o eliminar; toda acción destructiva pide confirmación y se valida también en la API.
 
 Responsive: menú lateral deslizable bajo 900 px, columnas secundarias ocultas bajo
-720 px, modales a pantalla completa y menú "Acción ▾" por fila en móvil.
+720 px, modales a pantalla completa y menú "Acción ▾" por fila en móvil. En esa
+misma medida, la tabla de usuarios usa `.table-cards` y se convierte en tarjetas con
+etiquetas, y sus botones de acción dejan de ocultarse; el resto de las tablas todavía
+usa desplazamiento horizontal.
 
 Flujo de datos: **crear/editar deja la sede "con cambios sin publicar"** → publicar
 genera una revisión inmutable → el agente la baja en su próximo ciclo.
@@ -218,6 +240,22 @@ node --test packages/plu-format/test/plu-format.test.js `
 5. **El agente no avanza la revisión si una balanza falla**, para que el error sea
    visible y reintentable.
 6. **Permisos resueltos por request**, no dentro del token, para que revocar sea inmediato.
+7. **Ventana de primer arranque y enrolamiento antes del primer inicio**: el
+   instalador permite pegar la URL y el código en una ventana, y cuando recibe
+   `-ApiUrl` y `-PairingCode` enrola **antes** de arrancar el servicio. Así el
+   operador no depende de la consola y el agente no queda repitiendo
+   `FATAL not enrolled yet`.
+8. **Revocar el agente en lugar de borrar la fila**: conserva el historial de la
+   máquina, invalida el token de inmediato y obliga a un enrolamiento nuevo, que
+   crea un agente distinto. Borrar la fila perdería la trazabilidad.
+9. **No firmar el binario por ahora**: no hay certificado ni `signtool`; el zip se
+   entrega por USB o red interna para evitar el *Mark-of-the-Web*. Un certificado
+   autofirmado no es de confianza en otras PC y agrava la operación. La decisión de
+   comprar un certificado real queda pendiente.
+10. **La versión del agente es independiente de la web y del API**: la fuente es
+    `apps/agent/package.json` (hoy `1.0.0`) y el tag de release es
+    `agent-v<version>`. La web y el API pueden avanzar sin volver a publicar el
+    agente, y viceversa.
 
 ## 10. Pendientes (en orden sugerido)
 
@@ -231,10 +269,11 @@ node --test packages/plu-format/test/plu-format.test.js `
 | Alta | **Probar el flujo completo con hardware**: sede + balanza + publicación + agente real | Es lo único que falta para cerrar el circuito. Requiere la PC en la red `192.168.0.x` |
 | Alta | Revisar los **23 artículos con precio 0** antes de publicar | Pueden llegar a la balanza con precio cero |
 | Media | **MySQL** | SQLite alcanza para una sede; varias sedes simultáneas necesitan servidor. La API es síncrona, migrar exige volver async los handlers |
-| Media | Firmar el `.exe` del agente | Sin firma, SmartScreen puede bloquearlo en la sede |
-| Media | Verificar en hardware las **10 unidades sin confirmar** (50g, g, 10g, 100g, oz, lb, 500g, 600g, PCS(oz), PCS(lb)) | Hoy son inferidas del orden del desplegable |
-| Media | Mapear los **32 bytes finales** del registro (tara, precio de paquete, mensajes, descuento) | Requiere una captura con esos campos cargados |
+| Media | **Decidir la firma del `.exe` del agente** | Sin firma, SmartScreen puede advertir en la sede; un certificado autofirmado no lo resuelve |
+| Media | **Cerrar las incógnitas abiertas del protocolo** (sección 11): `D204`, bytes `[93..123]`, obligatoriedad de `D207` y las **10 unidades sin confirmar** | Son datos inferidos; requieren capturas o pruebas en hardware |
 | Baja | Aislar cuál de los tres defectos del catálogo original disparaba el aborto | Se puede hacer con el CLI, sin GUI |
+| Baja | Actualizar el texto de `Sedes.jsx` que todavía muestra `balanza-agent enroll ...` | La instalación ya usa la ventana de conexión; el texto quedó viejo |
+| Baja | Reutilizar `.table-cards` en las demás tablas | Solo la tabla de usuarios se vuelve tarjetas; el resto sigue con scroll horizontal en móvil |
 | Baja | Unificar `camelCase`/`snake_case` en las respuestas de la API | Hoy artículos es camelCase y sedes/balanzas snake_case |
 | Baja | Importar/exportar `.Txp` desde la web | Hoy la carga masiva es por API |
 | Baja | Paginado del lado del servidor | Con 832 artículos no hace falta; importa al crecer |

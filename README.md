@@ -66,12 +66,22 @@ golden que dependen del catálogo real (`BaseDatosBalanza/`) se omiten cuando es
 carpeta no está presente, para que el repositorio público se pueda probar sin
 datos del negocio.
 
+## Agente para Windows
+
+El agente mantiene las balanzas de una sede sincronizadas con la API y corre como
+el servicio de Windows `BalanzaWebAgent`. Se distribuye como
+`balanza-agent-<version>-win-x64.zip` (1.0.0: `balanza-agent-1.0.0-win-x64.zip`), el
+paso a paso está en [`docs/instalacion-sede.md`](docs/instalacion-sede.md) y los
+binarios no se versionan en git: se publican como artefactos de release, según
+[`docs/agent-release.md`](docs/agent-release.md).
+
 ## Documentación
 
 - [`docs/PROJECT.md`](docs/PROJECT.md): estado del proyecto, decisiones y pendientes.
 - [`docs/protocol.md`](docs/protocol.md): protocolo RLS1000 verificado contra hardware.
 - [`docs/service.md`](docs/service.md): agente como servicio de Windows.
 - [`docs/instalacion-sede.md`](docs/instalacion-sede.md): instalación del agente en la PC de una sede, paso a paso.
+- [`docs/agent-release.md`](docs/agent-release.md): cómo generar, verificar y publicar una versión del agente.
 - [`docs/deploy.md`](docs/deploy.md): despliegue con Dokploy, backups y operación.
 
 ## Datos que no forman parte del repositorio
