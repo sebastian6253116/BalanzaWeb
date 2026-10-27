@@ -749,6 +749,23 @@ export function createApp({
         if (!user) return fail(res, 404, 'user not found');
         const body = await readJson(req);
         const roles = resolveRoles(body.roles);
+
+        const wasAdmin = db.get(
+          `SELECT 1 AS ok FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+            WHERE ur.user_id = ? AND r.key = 'admin'`,
+          user.id,
+        );
+        const keepsAdmin = roles.some((role) => role.key === 'admin');
+        if (wasAdmin && !keepsAdmin) {
+          const admins = db.get(
+            `SELECT COUNT(DISTINCT u.id) AS n FROM users u
+               JOIN user_roles ur ON ur.user_id = u.id
+               JOIN roles r ON r.id = ur.role_id
+              WHERE r.key = 'admin'`,
+          ).n;
+          if (admins <= 1) return fail(res, 422, 'the last administrator cannot lose the admin role');
+        }
+
         db.run('DELETE FROM user_roles WHERE user_id = ?', user.id);
         for (const role of roles) db.run('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', user.id, role.id);
         return json(res, 200, hydrateUser(user));

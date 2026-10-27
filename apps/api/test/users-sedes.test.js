@@ -208,6 +208,72 @@ test('DELETE user rejects deleting the last administrator', async () => {
   }
 });
 
+function roleKeys(userId) {
+  return db
+    .all(
+      `SELECT r.key FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ? ORDER BY r.key`,
+      userId,
+    )
+    .map((row) => row.key);
+}
+
+test('PUT user roles rejects removing admin from the last administrator', async () => {
+  const me = await json(await api('/api/auth/me'));
+  assert.deepEqual(roleKeys(me.user.id), ['admin']);
+
+  const res = await api(`/api/users/${me.user.id}/roles`, { method: 'PUT', body: { roles: ['operator'] } });
+  assert.equal(res.status, 422);
+  assert.match((await json(res)).error, /last administrator/);
+  assert.deepEqual(roleKeys(me.user.id), ['admin']);
+});
+
+test('PUT user roles allows demoting an administrator when another one exists', async () => {
+  const me = await json(await api('/api/auth/me'));
+  await createUser('second.admin', ['admin'], 'secondAdmin12345');
+  const secondToken = await login('second.admin', 'secondAdmin12345');
+
+  const res = await api(`/api/users/${me.user.id}/roles`, {
+    method: 'PUT',
+    body: { roles: ['operator'] },
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual((await json(res)).roles.map((role) => role.key), ['operator']);
+  assert.deepEqual(roleKeys(me.user.id), ['operator']);
+
+  const restore = await api(`/api/users/${me.user.id}/roles`, {
+    token: secondToken,
+    method: 'PUT',
+    body: { roles: ['admin'] },
+  });
+  assert.equal(restore.status, 200);
+  assert.deepEqual((await json(restore)).roles.map((role) => role.key), ['admin']);
+});
+
+test('PUT user roles promotes a normal user to admin', async () => {
+  const user = await createUser('promote.me', ['viewer']);
+  const res = await api(`/api/users/${user.id}/roles`, {
+    method: 'PUT',
+    body: { roles: ['viewer', 'admin'] },
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual((await json(res)).roles.map((role) => role.key), ['admin', 'viewer']);
+  assert.deepEqual(roleKeys(user.id), ['admin', 'viewer']);
+});
+
+test('a viewer is forbidden from changing roles', async () => {
+  const viewer = await createUser('viewer.roles', ['viewer'], 'viewerRolePassword123');
+  const token = await login('viewer.roles', 'viewerRolePassword123');
+  const me = await json(await api('/api/auth/me', { token }));
+
+  const res = await api(`/api/users/${me.user.id}/roles`, {
+    token,
+    method: 'PUT',
+    body: { roles: ['admin'] },
+  });
+  assert.equal(res.status, 403);
+  assert.deepEqual(roleKeys(me.user.id), ['viewer']);
+});
+
 test('a viewer is forbidden from the new write routes', async () => {
   await createUser('viewer.write', ['viewer'], 'viewerPassword123');
   const token = await login('viewer.write', 'viewerPassword123');

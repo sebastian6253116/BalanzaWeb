@@ -13,12 +13,14 @@ export default function Users({ user: currentUser }) {
   const [editForm, setEditForm] = useState({ name: '', username: '', active: true });
   const [passwordFor, setPasswordFor] = useState(null);
   const [newPassword, setNewPassword] = useState('');
+  const [roleDrafts, setRoleDrafts] = useState({});
 
   async function load() {
     const [usersData, rolesData] = await Promise.all([api('/users'), api('/roles')]);
     setUsers(usersData.users);
     setRoles(rolesData.roles);
     setPermissions(rolesData.permissions);
+    setRoleDrafts({});
   }
 
   useEffect(() => {
@@ -42,22 +44,61 @@ export default function Users({ user: currentUser }) {
     }
   }
 
-  async function toggleRole(user, roleKey) {
-    const next = user.roles.includes(roleKey)
-      ? user.roles.filter((key) => key !== roleKey)
-      : [...user.roles, roleKey];
+  function sameRoles(left, right) {
+    return left.length === right.length && left.every((key) => right.includes(key));
+  }
+
+  function draftFor(user) {
+    return roleDrafts[user.id] ?? user.roles;
+  }
+
+  function hasRoleDraft(user) {
+    return Boolean(roleDrafts[user.id]) && !sameRoles(roleDrafts[user.id], user.roles);
+  }
+
+  function toggleRole(user, roleKey) {
+    if (user.username === 'admin') return;
+    const current = draftFor(user);
+    const next = current.includes(roleKey)
+      ? current.filter((key) => key !== roleKey)
+      : [...current, roleKey];
     if (next.length === 0) {
       setError('El usuario debe tener al menos un rol.');
       return;
     }
     setError(null);
+    setRoleDrafts((drafts) => {
+      const updated = { ...drafts };
+      if (sameRoles(next, user.roles)) delete updated[user.id];
+      else updated[user.id] = next;
+      return updated;
+    });
+  }
+
+  async function saveRoles(user) {
+    const draft = roleDrafts[user.id];
+    if (!draft) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
     try {
-      await api(`/users/${user.id}/roles`, { method: 'PUT', body: { roles: next } });
+      await api(`/users/${user.id}/roles`, { method: 'PUT', body: { roles: draft } });
       setNotice(`Roles de "${user.username}" actualizados.`);
+      setRoleDrafts({});
       await load();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setBusy(false);
     }
+  }
+
+  function cancelRoles(user) {
+    setRoleDrafts((drafts) => {
+      const updated = { ...drafts };
+      delete updated[user.id];
+      return updated;
+    });
   }
 
   function startEdit(user) {
@@ -157,19 +198,39 @@ export default function Users({ user: currentUser }) {
                 <td className="mono">{user.username}</td>
                 <td>
                   <div className="pill-list">
-                    {roles.map((role) => (
-                      <button
-                        key={role.key}
-                        type="button"
-                        className={user.roles.includes(role.key) ? '' : 'ghost'}
-                        style={{ padding: '5px 11px', fontSize: 12 }}
-                        onClick={() => toggleRole(user, role.key)}
-                        title={`Alternar rol ${role.name}`}
-                      >
-                        {role.name}
-                      </button>
-                    ))}
+                    {roles.map((role) => {
+                      const locked = user.username === 'admin';
+                      const selected = draftFor(user).includes(role.key);
+                      return (
+                        <button
+                          key={role.key}
+                          type="button"
+                          className={selected ? '' : 'ghost'}
+                          style={{ padding: '5px 11px', fontSize: 12 }}
+                          disabled={locked || busy}
+                          onClick={() => toggleRole(user, role.key)}
+                          title={locked ? 'El rol del administrador no se puede cambiar' : `Alternar rol ${role.name}`}
+                        >
+                          {role.name}
+                        </button>
+                      );
+                    })}
                   </div>
+                  {user.username === 'admin' && (
+                    <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                      El rol del administrador no se puede cambiar
+                    </div>
+                  )}
+                  {hasRoleDraft(user) && (
+                    <div className="actions" style={{ justifyContent: 'flex-start', marginTop: 8 }}>
+                      <button type="button" className="btn-sm" disabled={busy} onClick={() => saveRoles(user)}>
+                        Guardar cambios
+                      </button>
+                      <button type="button" className="btn-sm ghost" disabled={busy} onClick={() => cancelRoles(user)}>
+                        Cancelar
+                      </button>
+                    </div>
+                  )}
                 </td>
                 <td>
                   {user.active ? <span className="badge ok">activo</span> : <span className="badge muted">inactivo</span>}
