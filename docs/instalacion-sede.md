@@ -66,9 +66,16 @@ usuario con el permiso `agents.manage` (el botón queda deshabilitado sin él).
 
 ## 4. Paso 1 — llevar el paquete a la PC
 
-El paquete se obtiene de la página de releases del repositorio o lo entrega quien
+El paquete se descarga de la página de releases del repositorio o lo entrega quien
 administra el sistema. Cómo se genera y publica una versión nueva está en
 [`agent-release.md`](agent-release.md).
+
+- Página de releases:
+  <https://github.com/sebastian6253116/BalanzaWeb/releases>
+- Release de la versión 1.0.0:
+  <https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.0>
+- Descarga directa del paquete:
+  <https://github.com/sebastian6253116/BalanzaWeb/releases/download/agent-v1.0.0/balanza-agent-1.0.0-win-x64.zip>
 
 Para 1.0.0 el paquete es un único archivo:
 

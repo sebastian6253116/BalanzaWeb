@@ -5,6 +5,9 @@ agente a una sede. Cubre el build, el empaquetado, la verificación y la publica
 del artefacto. El procedimiento del lado de la sede está en
 [`instalacion-sede.md`](instalacion-sede.md).
 
+**Estado:** la versión 1.0.0 está publicada en
+<https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.0>.
+
 ## 1. Por qué el binario no está en git
 
 `apps/agent/dist/` está en `.gitignore`: ahí quedan el ejecutable del agente y el
@@ -147,6 +150,35 @@ gh release create agent-v1.0.0 `
 `gh` **no está instalado en la máquina actual**, así que hoy el camino disponible
 es el de la interfaz web. El comando queda documentado para cuando se instale y
 autentique la herramienta.
+
+También se puede publicar con la API de GitHub, sin `gh`:
+
+```powershell
+# Requiere un token con scope repo en la variable GITHUB_TOKEN
+$sha = (Get-FileHash apps\agent\dist\balanza-agent-1.0.0-win-x64.zip).Hash.ToLower()
+$json = @{ tag_name = 'agent-v1.0.0'; target_commitish = 'main'; name = 'Agente BalanzaWeb 1.0.0'; body = "SHA-256: $sha" } | ConvertTo-Json
+$release = Invoke-RestMethod -Uri 'https://api.github.com/repos/sebastian6253116/BalanzaWeb/releases' `
+  -Method Post -Headers @{ Authorization = "token $env:GITHUB_TOKEN" } `
+  -ContentType 'application/json' -Body ([System.Text.Encoding]::UTF8.GetBytes($json))
+curl.exe -X POST -H "Authorization: token $env:GITHUB_TOKEN" -H "Content-Type: application/zip" `
+  --data-binary "@apps\agent\dist\balanza-agent-1.0.0-win-x64.zip" `
+  "https://uploads.github.com/repos/sebastian6253116/BalanzaWeb/releases/$($release.id)/assets?name=balanza-agent-1.0.0-win-x64.zip"
+```
+
+> El `Body` se manda como bytes UTF-8 a propósito: en PowerShell 5.1 un string con
+> acentos se serializa en otra codificación y GitHub responde
+> `400 Problems parsing JSON`.
+
+### 5.3 Verificar la release publicada
+
+La API devuelve el `digest` del asset, calculado por GitHub. Tiene que coincidir con
+el hash local, que es la prueba de que el archivo publicado son exactamente los bytes
+que se compilaron:
+
+```powershell
+$r = Invoke-RestMethod 'https://api.github.com/repos/sebastian6253116/BalanzaWeb/releases/tags/agent-v1.0.0'
+$r.assets | Select-Object name, size, state, digest
+```
 
 ## 6. Anotar el SHA-256
 
