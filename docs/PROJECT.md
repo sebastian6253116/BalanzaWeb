@@ -159,6 +159,8 @@ POST /agent/report
 | Estado | `status.read` | Revisión publicada, resultado real por balanza y historial de envíos |
 | Usuarios | `users.manage` | Alta de usuarios, asignación de roles y matriz de permisos |
 
+Además, las sedes y balanzas se pueden eliminar, y los usuarios se pueden editar, cambiar de clave o eliminar; toda acción destructiva pide confirmación y se valida también en la API.
+
 Responsive: menú lateral deslizable bajo 900 px, columnas secundarias ocultas bajo
 720 px, modales a pantalla completa y menú "Acción ▾" por fila en móvil.
 

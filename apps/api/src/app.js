@@ -592,6 +592,57 @@ export function createApp({
         json(res, 200, { scales: db.all('SELECT * FROM scales WHERE sede_id = ? ORDER BY name', Number(sedeId)) }),
     },
     {
+      method: 'DELETE',
+      pattern: /^\/api\/sedes\/(\d+)\/scales\/(\d+)$/,
+      permission: 'scales.write',
+      handler: async (req, res, [sedeId, scaleId]) => {
+        const scale = db.get(
+          'SELECT * FROM scales WHERE id = ? AND sede_id = ?',
+          Number(scaleId), Number(sedeId),
+        );
+        if (!scale) return fail(res, 404, 'scale not found');
+
+        db.exec('BEGIN');
+        try {
+          db.run('DELETE FROM deployment_results WHERE scale_id = ?', scale.id);
+          db.run('DELETE FROM scales WHERE id = ?', scale.id);
+          db.exec('COMMIT');
+        } catch (err) {
+          db.exec('ROLLBACK');
+          return fail(res, 500, 'could not delete the scale', err.message);
+        }
+        return json(res, 200, { ok: true, scaleId: scale.id });
+      },
+    },
+    {
+      method: 'DELETE',
+      pattern: /^\/api\/sedes\/(\d+)$/,
+      permission: 'sedes.write',
+      handler: async (req, res, [sedeId]) => {
+        const sede = db.get('SELECT * FROM sedes WHERE id = ?', Number(sedeId));
+        if (!sede) return fail(res, 404, 'sede not found');
+
+        const deleted = {
+          scales: db.get('SELECT COUNT(*) AS n FROM scales WHERE sede_id = ?', sede.id).n,
+          agents: db.get('SELECT COUNT(*) AS n FROM agents WHERE sede_id = ?', sede.id).n,
+          deployments: db.get('SELECT COUNT(*) AS n FROM deployments WHERE sede_id = ?', sede.id).n,
+          results: db.get('SELECT COUNT(*) AS n FROM deployment_results WHERE sede_id = ?', sede.id).n,
+        };
+
+        db.exec('BEGIN');
+        try {
+          // deployment_results has no foreign key, so it is cleaned up by hand.
+          db.run('DELETE FROM deployment_results WHERE sede_id = ?', sede.id);
+          db.run('DELETE FROM sedes WHERE id = ?', sede.id);
+          db.exec('COMMIT');
+        } catch (err) {
+          db.exec('ROLLBACK');
+          return fail(res, 500, 'could not delete the sede', err.message);
+        }
+        return json(res, 200, { ok: true, sedeId: sede.id, deleted });
+      },
+    },
+    {
       method: 'POST',
       pattern: /^\/api\/sedes\/(\d+)\/pairing-code$/,
       permission: 'agents.manage',
@@ -715,6 +766,85 @@ export function createApp({
         db.run('UPDATE users SET password_hash = ? WHERE id = ?', hashPassword(body.password), user.id);
         db.run('DELETE FROM sessions WHERE user_id = ?', user.id);
         return json(res, 200, { ok: true });
+      },
+    },
+    {
+      method: 'PATCH',
+      pattern: /^\/api\/users\/(\d+)$/,
+      permission: 'users.manage',
+      handler: async (req, res, [userId], query, context) => {
+        const id = Number(userId);
+        const user = db.get('SELECT * FROM users WHERE id = ?', id);
+        if (!user) return fail(res, 404, 'user not found');
+
+        const body = await readJson(req);
+        const updates = {};
+
+        if (body.name !== undefined) {
+          if (typeof body.name !== 'string') return fail(res, 422, 'name must be a string');
+          const name = body.name.trim();
+          if (!name) return fail(res, 422, 'name must not be empty');
+          updates.name = name;
+        }
+        if (body.username !== undefined) {
+          if (typeof body.username !== 'string') return fail(res, 422, 'username must be a string');
+          const username = body.username.trim().toLowerCase();
+          if (!/^[a-z0-9._-]{3,32}$/.test(username)) {
+            return fail(res, 422, 'username must be 3-32 characters: letters, digits, dot, dash or underscore');
+          }
+          if (db.get('SELECT id FROM users WHERE username = ? AND id <> ?', username, id)) {
+            return fail(res, 409, 'that username is already registered');
+          }
+          updates.username = username;
+        }
+        if (body.active !== undefined) {
+          if (typeof body.active !== 'boolean') return fail(res, 422, 'active must be a boolean');
+          if (!body.active && context.user.id === id) {
+            return fail(res, 422, 'you cannot deactivate your own account');
+          }
+          updates.active = body.active ? 1 : 0;
+        }
+
+        const fields = Object.keys(updates);
+        if (fields.length) {
+          const assignments = fields.map((field) => `${field} = ?`).join(', ');
+          db.run(
+            `UPDATE users SET ${assignments} WHERE id = ?`,
+            ...fields.map((field) => updates[field]),
+            id,
+          );
+        }
+        return json(res, 200, hydrateUser(db.get('SELECT * FROM users WHERE id = ?', id)));
+      },
+    },
+    {
+      method: 'DELETE',
+      pattern: /^\/api\/users\/(\d+)$/,
+      permission: 'users.manage',
+      handler: async (req, res, [userId], query, context) => {
+        const id = Number(userId);
+        const user = db.get('SELECT * FROM users WHERE id = ?', id);
+        if (!user) return fail(res, 404, 'user not found');
+        if (context.user.id === id) return fail(res, 422, 'you cannot delete your own account');
+
+        const isAdmin = db.get(
+          `SELECT 1 AS ok FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+            WHERE ur.user_id = ? AND r.key = 'admin'`,
+          id,
+        );
+        if (isAdmin) {
+          const admins = db.get(
+            `SELECT COUNT(DISTINCT u.id) AS n FROM users u
+               JOIN user_roles ur ON ur.user_id = u.id
+               JOIN roles r ON r.id = ur.role_id
+              WHERE r.key = 'admin'`,
+          ).n;
+          if (admins <= 1) return fail(res, 422, 'the last administrator cannot be deleted');
+        }
+
+        // sessions and user_roles cascade with the user.
+        db.run('DELETE FROM users WHERE id = ?', id);
+        return json(res, 200, { ok: true, userId: id });
       },
     },
     {

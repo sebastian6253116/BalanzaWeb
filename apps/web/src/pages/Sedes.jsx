@@ -11,6 +11,8 @@ export default function Sedes({ user }) {
   const [scales, setScales] = useState([]);
   const [pairing, setPairing] = useState(null);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const [busy, setBusy] = useState(false);
   const [newSede, setNewSede] = useState('');
   const [newScale, setNewScale] = useState({ name: '', host: '', port: 5001 });
 
@@ -62,6 +64,47 @@ export default function Sedes({ user }) {
     }
   }
 
+  async function removeSede(sede) {
+    if (!window.confirm(`¿Eliminar la sede "${sede.name}"? También se eliminan sus balanzas, agentes y publicaciones.`)) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api(`/sedes/${sede.id}`, { method: 'DELETE' });
+      const data = await api('/sedes');
+      setSedes(data.sedes);
+      if (selected?.id === sede.id) {
+        setSelected(null);
+        setScales([]);
+      } else if (!selected && data.sedes.length) {
+        setSelected(data.sedes[0]);
+      }
+      setNotice(`Sede "${sede.name}" eliminada.`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeScale(scale) {
+    if (!window.confirm(`¿Eliminar la balanza "${scale.name}" de ${selected.name}?`)) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api(`/sedes/${selected.id}/scales/${scale.id}`, { method: 'DELETE' });
+      setNotice(`Balanza "${scale.name}" eliminada.`);
+      await loadScales(selected.id);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function generateCode() {
     setError(null);
     try {
@@ -77,6 +120,7 @@ export default function Sedes({ user }) {
       <h2>Sedes y balanzas</h2>
       <div className="sub">Cada sede tiene su microservicio local y sus balanzas en la red interna</div>
 
+      {notice && <div className="alert info">{notice}</div>}
       {error && <div className="alert error">{error}</div>}
 
       <div className="panel">
@@ -106,6 +150,7 @@ export default function Sedes({ user }) {
               <th className="num">Revisión</th>
               <th className="num">Polling</th>
               <th>Cambios</th>
+              {canWrite && <th className="actions-col" />}
             </tr>
           </thead>
           <tbody>
@@ -121,11 +166,25 @@ export default function Sedes({ user }) {
                 <td>
                   {sede.pendingChanges ? <span className="badge warn">sin publicar</span> : <span className="badge ok">al día</span>}
                 </td>
+                {canWrite && (
+                  <td className="actions-col">
+                    <button
+                      className="btn-sm danger"
+                      disabled={busy}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        removeSede(sede);
+                      }}
+                    >
+                      Eliminar
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
             {sedes.length === 0 && (
               <tr>
-                <td colSpan={4} className="muted">
+                <td colSpan={canWrite ? 5 : 4} className="muted">
                   Todavía no hay sedes.
                 </td>
               </tr>
@@ -145,6 +204,7 @@ export default function Sedes({ user }) {
                   <th>Dirección</th>
                   <th>Último resultado</th>
                   <th>Última conexión</th>
+                  {canScales && <th className="actions-col" />}
                 </tr>
               </thead>
               <tbody>
@@ -164,11 +224,18 @@ export default function Sedes({ user }) {
                       )}
                     </td>
                     <td className="muted">{scale.last_seen_at ? new Date(scale.last_seen_at).toLocaleString() : '—'}</td>
+                    {canScales && (
+                      <td className="actions-col">
+                        <button className="btn-sm danger" disabled={busy} onClick={() => removeScale(scale)}>
+                          Eliminar
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
                 {scales.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="muted">
+                    <td colSpan={canScales ? 5 : 4} className="muted">
                       Esta sede no tiene balanzas cargadas.
                     </td>
                   </tr>
