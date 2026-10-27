@@ -1,0 +1,18 @@
+<service>
+  <id>BalanzaWebAgent</id>
+  <name>BalanzaWeb Agent</name>
+  <description>Keeps this sede's scales in sync with BalanzaWeb.</description>
+  <executable>__INSTALL_DIR__\balanza-agent.exe</executable>
+  <arguments>run</arguments>
+  <workingdirectory>__INSTALL_DIR__</workingdirectory>
+  <env name="BALANZA_AGENT_HOME" value="__DATA_DIR__"/>
+  <logpath>__DATA_DIR__\logs\winsw</logpath>
+  <log mode="roll-by-size"><sizeThreshold>10240</sizeThreshold><keepFiles>5</keepFiles></log>
+  <onfailure action="restart" delay="10 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <stoptimeout>30 sec</stoptimeout>
+  <stopexecutable>__INSTALL_DIR__\balanza-agent.exe</stopexecutable>
+  <stoparguments>request-stop</stoparguments>
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+</service>

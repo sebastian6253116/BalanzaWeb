@@ -1,0 +1,27 @@
+{
+  "name": "balanzaweb",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "node --test packages/plu-format/test/plu-format.test.js packages/scale-client/test/scale-client.test.js apps/api/test/api.test.js apps/api/test/server.test.js apps/agent/test/agent.test.js apps/agent/test/service.test.js",
+    "start:api": "node apps/api/src/index.js",
+    "build:web": "npm --workspace @balanza/web run build",
+    "test:agent": "node --test apps/agent/test/agent.test.js apps/agent/test/service.test.js",
+    "agent:build": "node apps/agent/scripts/build-sea.mjs",
+    "agent:winsw": "node apps/agent/scripts/fetch-winsw.mjs",
+    "agent:package": "node scripts/package-agent.mjs",
+    "agent:smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File apps/agent/service/smoke-test.ps1",
+    "e2e:pairing": "node scripts/e2e-pairing.mjs"
+  },
+  "devDependencies": {
+    "postject": "^1.0.0-alpha.6"
+  }
+}

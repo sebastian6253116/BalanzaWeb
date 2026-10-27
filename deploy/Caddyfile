@@ -1,0 +1,7 @@
+# Automatic HTTPS for the domain in deploy/.env and reverse proxy to the API.
+# Security headers (CSP, nosniff, frame-options, referrer-policy) are set by the
+# Node app on every response, so they are not duplicated here.
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy api:8080
+}

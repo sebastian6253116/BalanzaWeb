@@ -1,0 +1,265 @@
+# BalanzaWeb — estado del proyecto
+
+Documento de traspaso. Última actualización: **2026-10-26**.
+
+Resumen en una línea: web React en VPS + microservicio local que habla el
+**protocolo nativo** de las balanzas Rongta RLS1000 por **UDP**, sin instalar
+software del fabricante en la sede.
+
+---
+
+## 1. Cómo levantar todo (entorno de desarrollo)
+
+```powershell
+# 1. dependencias (una sola vez)
+npm install
+
+# 2. API (terminal 1)
+$env:PORT="8080"
+$env:DB_PATH="./data/dev.db"
+$env:BOOTSTRAP_ADMIN_USERNAME="admin"
+$env:BOOTSTRAP_ADMIN_PASSWORD="admin123"
+node apps/api/src/index.js
+
+# 3. Web (terminal 2)
+node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173 --config apps/web/vite.config.js
+#   (o, desde apps/web: npx vite)
+
+# 4. Agente local (terminal 3, en la PC de la sede)
+node apps/agent/src/index.js enroll --api http://127.0.0.1:8080 --code <CODIGO>
+node apps/agent/src/index.js run
+```
+
+| Dato | Valor |
+|---|---|
+| Web | http://127.0.0.1:5173 |
+| API | http://127.0.0.1:8080 |
+| Usuario / clave (dev) | `admin` / `admin123` |
+| Balanza de prueba | `192.168.0.201`, UDP **5001** |
+| Base de datos (dev) | `data/dev.db` (SQLite) |
+
+> El proxy de Vite manda `/api` y `/agent` al puerto 8080.
+> En Windows, `Start-Process npx` falla: hay que lanzar `node …/vite/bin/vite.js`.
+
+Comandos útiles del CLI de balanzas:
+
+```powershell
+node apps/cli/src/index.js validate <archivo.Txp>
+node apps/cli/src/index.js build <archivo.Txp>
+node apps/cli/src/index.js probe --ip 192.168.0.201
+node apps/cli/src/index.js push <archivo.Txp> --ip 192.168.0.201 [--dry-run]
+```
+
+## 2. Estructura
+
+```
+packages/plu-format    .Txp → registros de 124 bytes → tramas UDP + validador
+packages/scale-client  transporte UDP con ACK, timeout y reintentos
+apps/api               API HTTP (node:http + node:sqlite), auth por sesión
+apps/agent             servicio local: enrolamiento, polling, push, reporte
+apps/agent/src/paths.js    rutas de datos (%ProgramData% vs binarios)
+apps/agent/src/log.js      log rotativo propio del agente
+apps/agent/scripts         build SEA (binario único) y descarga de WinSW
+apps/agent/service         plantilla WinSW + install.ps1 / uninstall.ps1
+apps/agent/dist/balanza-agent-<version>-win-x64.zip  paquete plano para la sede (npm run agent:package)
+apps/cli               herramienta de operación (validate / build / probe / push)
+apps/web               React 18 + Vite (sin librería de UI, CSS propio)
+docs/protocol.md       contrato del protocolo (verificado contra hardware)
+docs/service.md        empaquetado e instalación como servicio Windows
+docs/deploy.md         despliegue del API + web en VPS (Docker, Caddy, backups)
+deploy/                Dockerfile, docker-compose.yml y Caddyfile
+docs/captures/         capturas .pcapng de referencia
+```
+
+Sin dependencias de runtime en API, agente y paquetes. La web usa solo React + Vite.
+
+## 3. Protocolo RLS1000 (resumen)
+
+Detalle completo en `docs/protocol.md`. Lo esencial:
+
+- **UDP puerto 5001**. La balanza responde a cada datagrama con **un UDP vacío (ACK)**.
+  No hay códigos de error ni confirmación de commit.
+- Tramas de tamaño fijo: `0x0E` = 261 bytes, `0xD2` = 265 bytes.
+- Checksum: **suma uint16 little-endian** de todos los bytes previos (no es CRC).
+- Secuencia: `0E01` hello → `D201` start → `D202`×N datos → `D204`×3 tabla de
+  teclado → `D207`×2 → `D205` → `D20C` → `0E02` goodbye.
+- Cuerpo de datos: 256 bytes = **2 registros de 124 bytes** + 8 de relleno; `seq` de 8 bits.
+- Registro PLU: nombre 72 (ASCII), LF code BCD en `[73..74]`, barcode BCD 6 dígitos
+  en `[77..79]`, precio BCD en `[83..84]`, unidad en `[85]`, departamento BCD en
+  `[86]`, validez u16 LE en `[90..91]`, flag de empaque en `[92]` (`0x00` normal,
+  `0x80` por unidad).
+
+**Verificado en hardware:** transferencia de 832 PLUs (425 tramas, ~9,7 s) con los
+datos confirmados en el equipo.
+
+## 4. API
+
+Autenticación en dos planos:
+
+| Plano | Credencial | Uso |
+|---|---|---|
+| Personas | usuario + clave → token de sesión (12 h) | `/api/*` |
+| Agentes | código de emparejamiento → token de agente | `/agent/*` |
+
+- Contraseñas con **scrypt**; sesiones guardadas como **SHA-256**; cambiar la clave
+  invalida las sesiones abiertas.
+- Los permisos se resuelven **por request**, así que revocar un permiso es inmediato.
+
+### Permisos por sección
+
+| Sección | Permisos |
+|---|---|
+| Artículos | `articles.read`, `articles.write` |
+| Sedes | `sedes.read`, `sedes.write` |
+| Balanzas | `scales.read`, `scales.write` |
+| Publicaciones | `deployments.create` |
+| Estado | `status.read` |
+| Agentes | `agents.manage` |
+| Usuarios | `users.manage` |
+
+Roles semilla: `admin` (todo), `operator` (maestro + publicar + lectura), `viewer` (lectura).
+
+### Endpoints principales
+
+```
+POST /api/auth/login | logout        GET /api/auth/me
+GET/POST /api/articles               PATCH/DELETE /api/articles/:id
+GET  /api/articles/suggest           PUT /api/articles        (carga masiva)
+GET  /api/catalog                    GET /api/units
+GET/POST /api/sedes                  GET/POST /api/sedes/:id/scales
+POST /api/sedes/:id/pairing-code     POST /api/sedes/:id/deployments
+GET  /api/sedes/:id/status           GET/POST /api/users
+PUT  /api/users/:id/roles            PUT /api/users/:id/password
+GET  /api/roles                      PUT /api/roles/:key/permissions
+--- agentes ---
+POST /agent/enroll                   GET /agent/sync?revision=N  (304 si no hay cambios)
+POST /agent/report
+```
+
+## 5. Agente local
+
+- `enroll` guarda la config en `data/agent.config.json` (token + revisión + hashes).
+- `run` consulta cada N segundos. **Si la respuesta es 304 no hace nada.**
+- Al recibir una revisión: arma los registros **localmente**, calcula el hash y
+  **solo envía a las balanzas cuyo contenido cambió**.
+- La revisión local **solo avanza si todas las balanzas ACKearon**; si una falla,
+  se reintenta en el próximo ciclo sin reenviar a las que ya estaban bien.
+- El intervalo remoto (desde la web) aplica salvo que exista override local.
+- En producción corre como servicio Windows `BalanzaWebAgent`: binario único
+  (Node SEA) + WinSW, datos en `%ProgramData%\BalanzaWeb\Agent`, log rotativo y
+  parada ordenada con `request-stop`. Ver `docs/service.md`.
+
+## 6. Web
+
+| Pantalla | Permiso | Qué hace |
+|---|---|---|
+| Artículos | `articles.read` | Maestro con **paginado 10/30/50/100**, búsqueda progresiva con spinner, alta/edición con sugerencia de código libre y selector de las 13 unidades |
+| Sedes y balanzas | `sedes.read` | Alta de sedes, balanzas (nombre/IP/puerto) y código de autorización |
+| Publicar | `deployments.create` | Elige sede y destino (todas o balanzas puntuales) y crea la revisión |
+| Estado | `status.read` | Revisión publicada, resultado real por balanza y historial de envíos |
+| Usuarios | `users.manage` | Alta de usuarios, asignación de roles y matriz de permisos |
+
+Responsive: menú lateral deslizable bajo 900 px, columnas secundarias ocultas bajo
+720 px, modales a pantalla completa y menú "Acción ▾" por fila en móvil.
+
+Flujo de datos: **crear/editar deja la sede "con cambios sin publicar"** → publicar
+genera una revisión inmutable → el agente la baja en su próximo ciclo.
+
+## 7. Base de datos
+
+SQLite en desarrollo (`node:sqlite`). Tablas: `sedes`, `scales`, `agents`,
+`pairing_codes`, `articles`, `deployments` (con `catalog_json`, snapshot inmutable),
+`deployment_results`, `users`, `roles`, `role_permissions`, `user_roles`, `sessions`.
+
+Para pasar a MySQL en el VPS alcanza con reimplementar los cuatro métodos de
+`apps/api/src/db.js` (`run`, `get`, `all`, `exec`). El resto del código no cambia.
+
+## 8. Tests
+
+```powershell
+node --test packages/plu-format/test/plu-format.test.js `
+               packages/scale-client/test/scale-client.test.js `
+               apps/api/test/api.test.js apps/api/test/server.test.js `
+               apps/agent/test/agent.test.js apps/agent/test/service.test.js
+```
+
+**50 tests, todos verdes.** Incluyen:
+
+- Golden byte-a-byte de los **832 registros** y de **todas las tramas de control**
+  contra las capturas reales (fixture inmutable `test/fixtures/plu-832-original.txp`).
+- Transporte UDP contra una balanza falsa (ACK, reintento, timeout).
+- API: flujo completo, permisos, roles editables, sesiones, validación de catálogo.
+- Agente: push, 304, skip por hash, fallo no avanza revisión, envío selectivo.
+- Servicio: rutas, log rotativo y tolerante a fallos, guardado atómico de la
+  config y parada ordenada de `run` mediante `request-stop`.
+
+## 9. Decisiones tomadas (y por qué)
+
+1. **Snapshot completo por revisión**, no deltas: 832 PLUs son ~100 KB y elimina
+   bugs de sincronización incremental. El "diff" ocurre por balanza con el hash.
+2. **Validar contra el catálogo completo** en cada alta/edición: los duplicados solo
+   se detectan comparando con el resto.
+3. **No borrar filas al corregir duplicados**: se reasignó código para no dejar
+   teclas apuntando a la nada.
+4. **Commit sin confirmación de la balanza**: no existe; el éxito se define por ACK
+   de todas las tramas. La app del fabricante reporta "listo" sin verificar y falla
+   en silencio.
+5. **El agente no avanza la revisión si una balanza falla**, para que el error sea
+   visible y reintentable.
+6. **Permisos resueltos por request**, no dentro del token, para que revocar sea inmediato.
+
+## 10. Pendientes (en orden sugerido)
+
+| Prioridad | Tarea | Por qué |
+|---|---|---|
+| Hecho | **Empaquetar el agente como servicio Windows y distribuirlo** (binario único, arranque automático, log a archivo, zip plano para la sede) | Implementado con Node SEA + WinSW; `npm run agent:package` genera `balanza-agent-<version>-win-x64.zip`; ver `docs/service.md` |
+| Hecho | **API lista para desplegar** (un solo proceso sirve API y web compilada, `/healthz`, headers de seguridad, rate limit de login, logs por request, archivos estáticos con fallback SPA, Dockerfile + compose + Caddy) | Implementado en `apps/api/src/app.js` e `apps/api/src/index.js`; artefactos en `deploy/` y guía en `docs/deploy.md` |
+| Alta | **Despliegue en VPS + HTTPS** | Pendiente de acceso a la infraestructura. Los artefactos (`deploy/`) no se ejecutaron en la máquina de desarrollo porque no hay Docker allí |
+| Media | **MySQL** | SQLite alcanza para una sede; varias sedes simultáneas necesitan servidor |
+| Media | Verificar en hardware las **10 unidades sin confirmar** (50g, g, 10g, 100g, oz, lb, 500g, 600g, PCS(oz), PCS(lb)) | Hoy son inferidas del orden del desplegable |
+| Media | Mapear los **32 bytes finales** del registro (tara, precio de paquete, mensajes, descuento) | Requiere una captura con esos campos cargados |
+| Baja | Aislar cuál de los tres defectos del catálogo original disparaba el aborto | Se puede hacer con el CLI, sin GUI |
+| Baja | Unificar `camelCase`/`snake_case` en las respuestas de la API | Hoy artículos es camelCase y sedes/balanzas snake_case |
+| Baja | Importar/exportar `.Txp` desde la web | Hoy la carga masiva es por API |
+| Baja | Paginado del lado del servidor | Con 832 artículos no hace falta; importa al crecer |
+
+## 11. Incógnitas abiertas del protocolo
+
+1. Semántica de la tercera trama `D204` (contiene bytes que no son BCD).
+2. Bytes `[93..123]` del registro PLU.
+3. Si `D204` es obligatoria y si las dos `D207` son necesarias.
+4. Las 10 unidades de peso no verificadas.
+
+## 12. Trampas encontradas (para no repetirlas)
+
+- **PowerShell + UTF-8**: `Get-Content -Raw` lee UTF-8 sin BOM como Latin-1 y
+  `Set-Content -Encoding UTF8` agrega **BOM**. Resultado: acentos rotos ("Ã³") y
+  esbuild fallando con `Unexpected "�"`. Editar fuentes con la herramienta de
+  escritura, no con `Set-Content`.
+- **`node --test <carpeta>`** no acepta directorios en Node 22: hay que pasar los
+  archivos `.test.js`.
+- **`Start-Process npx`** falla en Windows (es un shim `.cmd`): usar `node` con la
+  ruta al binario de Vite.
+- **`npm install`** en la raíz es necesario para los workspaces (una sola vez).
+- **Captura de red**: `pktmon` (nativo) + `tshark` sirve y no requiere Npcap; Npcap
+  free **no** acepta instalación silenciosa. `pktmon` duplica paquetes por
+  componente: deduplicar por payload.
+- **El archivo `.Txp` real** tenía 4 códigos de barra duplicados que hacían que la
+  balanza descartara todo sin avisar. El validador ahora lo bloquea.
+
+## 13. Historial de verificación en hardware
+
+| Fecha | Prueba | Resultado |
+|---|---|---|
+| 2026-10-26 | Descarga de 10 PLUs limpios | PLUs confirmados en la balanza |
+| 2026-10-26 | Push de precios distintivos desde el CLI | Precios confirmados en la balanza |
+| 2026-10-26 | Push del catálogo completo (832 PLUs) | 425 tramas, 0 reintentos, 9,7 s |
+| 2026-10-26 | Agente completo (API → agente → balanza) | `last_result=ok`, y 304 en el ciclo siguiente |
+
+## 14. Credenciales y datos sensibles
+
+- Credenciales de desarrollo: `admin` / `admin123`. **Cambiar antes de exponer la app.**
+- El token del agente vive en `%ProgramData%\BalanzaWeb\Agent\config\agent.config.json`
+  en producción (en desarrollo, `data/agent.config.json`): restringir ACL y, más
+  adelante, guardarlo con DPAPI o Credential Manager.
+- `data/` no debe versionarse (contiene la base y los tokens).

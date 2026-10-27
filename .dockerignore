@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+data
+**/*.db*
+apps/web/dist
+apps/agent/dist
+apps/agent/service/bin
+**/*.zip
+BaseDatosBalanza
+docs/captures
+.atl
+.git
+.env
+deploy/.env
+**/*.log
