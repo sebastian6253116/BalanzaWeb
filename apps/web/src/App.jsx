@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, clearToken, getToken, setToken } from './api.js';
 import Login from './pages/Login.jsx';
 import Articles from './pages/Articles.jsx';
+import Barcode from './pages/Barcode.jsx';
 import Sedes from './pages/Sedes.jsx';
 import Publish from './pages/Publish.jsx';
 import Status from './pages/Status.jsx';
@@ -9,6 +10,7 @@ import Users from './pages/Users.jsx';
 
 const PAGES = [
   { key: 'articles', label: 'Artículos', permission: 'articles.read', component: Articles },
+  { key: 'barcode', label: 'Código de barras', permission: 'articles.read', component: Barcode },
   { key: 'sedes', label: 'Sedes y balanzas', permission: 'sedes.read', component: Sedes },
   { key: 'publish', label: 'Publicar', permission: 'deployments.create', component: Publish },
   { key: 'status', label: 'Estado', permission: 'status.read', component: Status },

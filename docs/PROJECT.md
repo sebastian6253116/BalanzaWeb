@@ -181,6 +181,7 @@ POST /agent/report
 | Pantalla | Permiso | Qué hace |
 |---|---|---|
 | Artículos | `articles.read` | Maestro con **paginado 10/30/50/100**, búsqueda progresiva con spinner, alta/edición con sugerencia de código libre y selector de las 13 unidades |
+| Código de barras | `articles.read` | Genera el EAN-13 de una referencia: base de 12 dígitos con relleno a la derecha y dígito de control módulo 10. Dibuja el código como SVG (EAN-13 o CODE128) y lo descarga en PNG |
 | Sedes y balanzas | `sedes.read` | Alta y **baja** de sedes y balanzas (con confirmación), y código de autorización |
 | Publicar | `deployments.create` | Elige sede y destino (todas o balanzas puntuales) y crea la revisión |
 | Estado | `status.read` | Revisión publicada, resultado real por balanza, historial de envíos y **agentes de la sede**, que se pueden **revocar** con `agents.manage`; un agente revocado queda con la etiqueta `revocado` |
@@ -213,16 +214,18 @@ node --test packages/plu-format/test/plu-format.test.js `
                packages/scale-client/test/scale-client.test.js `
                apps/api/test/api.test.js apps/api/test/server.test.js `
                apps/api/test/users-sedes.test.js `
-               apps/agent/test/agent.test.js apps/agent/test/service.test.js
+               apps/agent/test/agent.test.js apps/agent/test/service.test.js `
+               apps/web/test/barcode.test.js
 ```
 
-**76 tests, todos verdes.** Incluyen:
+**85 tests, todos verdes.** Incluyen:
 
 - Golden byte-a-byte de los **832 registros** y de **todas las tramas de control**
   contra las capturas reales (fixture inmutable `test/fixtures/plu-832-original.txp`).
 - Transporte UDP contra una balanza falsa (ACK, reintento, timeout).
 - API: flujo completo, permisos, roles editables, sesiones, validación de catálogo.
-- Agente: push, 304, skip por hash, fallo no avanza revisión, envío selectivo.
+- Agente: push, 304, skip por hash, fallo no avanza revisión, envío selectivo, comando `version`.
+- Código de barras: dígito de control EAN-13 contra vectores conocidos, geometría de 95 módulos y checksum de CODE128 subset B.
 - Servicio: rutas, log rotativo y tolerante a fallos, guardado atómico de la
   config y parada ordenada de `run` mediante `request-stop`.
 
