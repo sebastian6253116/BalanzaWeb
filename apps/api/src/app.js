@@ -23,6 +23,7 @@ import {
 import { PERMISSIONS, PERMISSION_KEYS } from './permissions.js';
 import { WEIGHT_UNITS, toTxpText, validateRows } from '../../../packages/plu-format/src/index.js';
 import { buildXlsx } from '../../../packages/xlsx/src/index.js';
+import { buildVendorWorkbook } from './vendor-export.js';
 
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
 
@@ -472,6 +473,14 @@ export function createApp({
 
         if (format === 'txp') {
           return attachment(res, toTxpText(articles), `maestro-balanza-${stamp}.txp`);
+        }
+        if (format === 'vendor') {
+          return attachment(
+            res,
+            buildVendorWorkbook(articles),
+            `maestro-balanza-${stamp}-fabricante.xlsx`,
+            XLSX_CONTENT_TYPE,
+          );
         }
         if (format !== 'xlsx') return fail(res, 400, 'unsupported export format');
 

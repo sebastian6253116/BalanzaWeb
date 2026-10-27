@@ -102,9 +102,12 @@ export default function Articles({ user }) {
     const today = new Date();
     const pad = (value) => String(value).padStart(2, '0');
     const stamp = `${today.getFullYear()}${pad(today.getMonth() + 1)}${pad(today.getDate())}`;
-    const label = format === 'xlsx' ? 'Excel' : '.Txp';
+    const label = format === 'xlsx' ? 'Excel' : format === 'txp' ? '.Txp' : 'fabricante';
+    const filename = format === 'vendor'
+      ? `maestro-balanza-${stamp}-fabricante.xlsx`
+      : `maestro-balanza-${stamp}.${format}`;
     try {
-      await download(`/articles/export?format=${format}`, `maestro-balanza-${stamp}.${format}`);
+      await download(`/articles/export?format=${format}`, filename);
     } catch (err) {
       setError(`No se pudo exportar el maestro en ${label}: ${err.message}`);
     } finally {
@@ -239,6 +242,9 @@ export default function Articles({ user }) {
                   </button>
                   <button onClick={() => exportCatalog('txp')} disabled={exporting !== null}>
                     {exporting === 'txp' ? 'Exportando .Txp…' : 'Exportar .Txp'}
+                  </button>
+                  <button onClick={() => exportCatalog('vendor')} disabled={exporting !== null}>
+                    {exporting === 'vendor' ? 'Exportando fabricante…' : 'Exportar fabricante'}
                   </button>
                 </>
               )}

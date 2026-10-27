@@ -106,9 +106,11 @@ function cellXml(column, row, rowIndex, columnIndex) {
   return `<c r="${reference}" t="n"><v>${type === 'integer' ? Math.trunc(number) : number}</v></c>`;
 }
 
-function worksheetXml({ sheetName, columns, rows }) {
+function worksheetXml({ sheetName, columns, rows, header }) {
   const lastColumn = columnName(columns.length);
-  const lastRow = rows.length + 1;
+  const firstDataRow = header ? 2 : 1;
+  const lastRow = rows.length + firstDataRow - 1;
+  const dimensionRef = lastRow >= 1 ? `A1:${lastColumn}${lastRow}` : 'A1';
 
   const widths = columns
     .map((column, index) =>
@@ -118,33 +120,42 @@ function worksheetXml({ sheetName, columns, rows }) {
     )
     .join('');
 
-  const header = columns
-    .map(
-      (column, index) =>
-        `<c r="${columnName(index + 1)}1" s="1" t="inlineStr"><is><t xml:space="preserve">${escapeXml(column.header)}</t></is></c>`,
-    )
-    .join('');
+  const headerRow = header
+    ? `<row r="1">${columns
+        .map(
+          (column, index) =>
+            `<c r="${columnName(index + 1)}1" s="1" t="inlineStr"><is><t xml:space="preserve">${escapeXml(column.header)}</t></is></c>`,
+        )
+        .join('')}</row>`
+    : '';
 
   const body = rows
     .map((row, rowIndex) => {
+      const excelRow = rowIndex + firstDataRow;
       const cells = columns
-        .map((column, columnIndex) => cellXml(column, row, rowIndex + 1, columnIndex + 1))
+        .map((column, columnIndex) => cellXml(column, row, excelRow - 1, columnIndex + 1))
         .join('');
-      return `<row r="${rowIndex + 2}">${cells}</row>`;
+      return `<row r="${excelRow}">${cells}</row>`;
     })
     .join('');
+
+  // Freezing row 1 only makes sense when row 1 is the header; without one it
+  // would lock the first data row to the top of the viewport.
+  const sheetViews = header
+    ? `<sheetViews><sheetView workbookViewId="0" tabSelected="1">` +
+      `<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>` +
+      `<selection pane="bottomLeft" activeCell="A2" sqref="A2"/>` +
+      `</sheetView></sheetViews>`
+    : `<sheetViews><sheetView workbookViewId="0" tabSelected="1"/></sheetViews>`;
 
   return (
     `${XML_DECLARATION}` +
     `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
-    `<dimension ref="A1:${lastColumn}${lastRow}"/>` +
-    `<sheetViews><sheetView workbookViewId="0" tabSelected="1">` +
-    `<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>` +
-    `<selection pane="bottomLeft" activeCell="A2" sqref="A2"/>` +
-    `</sheetView></sheetViews>` +
+    `<dimension ref="${dimensionRef}"/>` +
+    sheetViews +
     `<sheetFormatPr defaultRowHeight="15"/>` +
     (widths ? `<cols>${widths}</cols>` : '') +
-    `<sheetData><row r="1">${header}</row>${body}</sheetData>` +
+    `<sheetData>${headerRow}${body}</sheetData>` +
     `</worksheet>`
   );
 }
@@ -226,12 +237,14 @@ function xmlEntry(name, xml) {
  * @param {string} [options.sheetName]
  * @param {{ header: string, key: string, width?: number, type?: 'text' | 'number' | 'money' | 'integer' }[]} options.columns
  * @param {object[]} options.rows
+ * @param {boolean} [options.header=true] Write the column headers as row 1
  * @returns {Buffer}
  */
-export function buildXlsx({ sheetName = 'Hoja1', columns, rows }) {
+export function buildXlsx({ sheetName = 'Hoja1', columns, rows, header = true }) {
   validateSheetName(sheetName);
   validateColumns(columns);
   if (!Array.isArray(rows)) throw new TypeError('buildXlsx expects rows to be an array');
+  if (typeof header !== 'boolean') throw new TypeError('buildXlsx expects header to be a boolean');
 
   return createZip([
     xmlEntry('[Content_Types].xml', contentTypesXml()),
@@ -239,6 +252,6 @@ export function buildXlsx({ sheetName = 'Hoja1', columns, rows }) {
     xmlEntry('xl/workbook.xml', workbookXml(sheetName)),
     xmlEntry('xl/_rels/workbook.xml.rels', workbookRelationshipsXml()),
     xmlEntry('xl/styles.xml', stylesXml()),
-    xmlEntry('xl/worksheets/sheet1.xml', worksheetXml({ sheetName, columns, rows })),
+    xmlEntry('xl/worksheets/sheet1.xml', worksheetXml({ sheetName, columns, rows, header })),
   ]);
 }

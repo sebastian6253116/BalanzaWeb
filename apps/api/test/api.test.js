@@ -6,6 +6,7 @@ import { openDatabase } from '../src/db.js';
 import { createApp } from '../src/app.js';
 import { ensureFirstUser } from '../src/bootstrap.js';
 import { parseTxpText } from '../../../packages/plu-format/src/index.js';
+import { readSheetRows } from '../../../packages/xlsx/src/read.js';
 
 let server;
 let base;
@@ -339,6 +340,39 @@ test('the article master also exports as a real .xlsx workbook', async () => {
   assert.match(txp.headers.get('content-type'), /text\/plain/);
   assert.match(txp.headers.get('content-disposition'), /maestro-balanza-\d{8}\.txp/);
   parseTxpText(await txp.text());
+});
+
+test('the article master exports a vendor-layout workbook with no header row', async () => {
+  const guide = await (await api('/api/articles')).json();
+  assert.ok(guide.articles.length > 0);
+
+  const res = await api('/api/articles/export?format=vendor');
+  assert.equal(res.status, 200);
+  assert.equal(
+    res.headers.get('content-type'),
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  );
+  assert.match(res.headers.get('content-disposition'), /maestro-balanza-\d{8}-fabricante\.xlsx/);
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+
+  const body = Buffer.from(await res.arrayBuffer());
+  assert.equal(body.subarray(0, 2).toString('ascii'), 'PK');
+  assert.equal(Number(res.headers.get('content-length')), body.length);
+
+  const rows = readSheetRows(body);
+  assert.equal(rows.length, guide.articles.length, 'one row per active article, no header');
+  assert.equal(rows[0].length, 26, 'the vendor layout has 26 columns');
+  assert.equal(rows[0][0], String(guide.articles[0].pluNumber), 'row 1 starts with the first PLU');
+  assert.notEqual(rows[0][0], 'Teclado', 'the first row must be data, not a header');
+  assert.equal(rows[0][5], String(guide.articles[0].priceCents), 'the price stays in cents');
+  assert.equal(rows[0][8], '0.000', 'pack weight keeps its text form');
+  assert.equal(rows[0][25], '0');
+
+  const xlsx = await api('/api/articles/export?format=xlsx');
+  assert.equal(xlsx.status, 200);
+  const xlsxRows = readSheetRows(Buffer.from(await xlsx.arrayBuffer()));
+  assert.equal(xlsxRows[0][0], 'Teclado', 'the regular spreadsheet still has a header row');
+  assert.equal(xlsxRows[1][0], String(guide.articles[0].pluNumber));
 });
 
 test('exporting the master requires articles.read', async () => {

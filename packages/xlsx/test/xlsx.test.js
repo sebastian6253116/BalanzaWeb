@@ -198,3 +198,13 @@ test('the output is deterministic and the sheet name rules are enforced', () => 
     assert.throws(() => build({ sheetName }), /sheet name/i, `must reject ${JSON.stringify(sheetName)}`);
   }
 });
+
+test('header: false omits the header row and starts the data at row 1', () => {
+  const xml = readZip(build({ header: false })).get('xl/worksheets/sheet1.xml').data.toString('utf8');
+
+  assert.equal(xml.includes('>Teclado<'), false, 'no header labels');
+  assert.ok(xml.includes('<dimension ref="A1:K2"/>'));
+  assert.ok(xml.includes('<row r="1">'));
+  assert.ok(xml.includes('<row r="2">'));
+  assert.equal(xml.includes('ySplit'), false, 'nothing to freeze without a header');
+});
