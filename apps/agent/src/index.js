@@ -7,6 +7,7 @@
  *   balanza-agent once
  *   balanza-agent request-stop
  *   balanza-agent status
+ *   balanza-agent version
  *
  * No third-party runtime: the agent is plain Node plus the shared protocol packages.
  */
@@ -18,6 +19,7 @@ import { defaultLogDir, stopFlagPath, pidPath, legacyConfigPath } from './paths.
 import { createLogger, installCrashHandlers } from './log.js';
 import { syncOnce } from './sync.js';
 import { pushPlu } from '../../../packages/scale-client/src/index.js';
+import pkg from '../package.json' with { type: 'json' };
 
 const stamp = () => new Date().toISOString();
 const consoleLog = (message) => console.log(`${stamp()} ${message}`);
@@ -224,8 +226,11 @@ async function main() {
       case 'status':
         await status(flags);
         break;
+      case 'version':
+        console.log(`balanza-agent ${pkg.version}`);
+        break;
       default:
-        console.log('usage: balanza-agent enroll --api <url> --code <code> | run | once | request-stop | status');
+        console.log('usage: balanza-agent enroll --api <url> --code <code> | run | once | request-stop | status | version');
         process.exitCode = 2;
     }
   } catch (err) {

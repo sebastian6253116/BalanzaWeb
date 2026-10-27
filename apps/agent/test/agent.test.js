@@ -1,8 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import { syncOnce, hashRecords } from '../src/sync.js';
 import { buildRecord } from '../../../packages/plu-format/src/index.js';
+
+const agentScript = fileURLToPath(new URL('../src/index.js', import.meta.url));
+const agentVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 const articles = [
   { name: 'LOMO DE AGUJA', lfCode: 1, pluNumber: 1, barcode: 11001, priceCents: 1450, unitCode: 4, department: 21, validityDays: 365, packageType: 0, barcodeType: 7 },
@@ -127,4 +135,25 @@ test('the remote poll interval applies unless a local override is set', async ()
   override.pollIntervalSeconds = 300;
   await syncOnce({ config: override, fetchImpl: fakeFetch({ payload: payload(2) }), push: pushOk, persist: () => {} });
   assert.equal(override.pollIntervalSeconds, 300);
+});
+
+test('version prints the package version and the usage line lists it', () => {
+  const home = mkdtempSync(join(tmpdir(), 'balanza-version-'));
+  const env = { ...process.env, BALANZA_AGENT_HOME: home };
+  delete env.BALANZA_AGENT_CONFIG;
+  delete env.BALANZA_AGENT_LOG_DIR;
+
+  try {
+    const version = spawnSync(process.execPath, [agentScript, 'version'], { env, encoding: 'utf8' });
+    assert.equal(version.status, 0, `version failed: ${version.stderr}`);
+    assert.equal(version.stdout.trim(), `balanza-agent ${agentVersion}`);
+
+    for (const args of [[], ['not-a-command']]) {
+      const usage = spawnSync(process.execPath, [agentScript, ...args], { env, encoding: 'utf8' });
+      assert.equal(usage.status, 2);
+      assert.match(usage.stdout, /version/, 'the usage line must list the version command');
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
