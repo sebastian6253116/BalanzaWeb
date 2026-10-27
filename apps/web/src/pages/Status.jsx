@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 
-export default function Status() {
+export default function Status({ user }) {
+  const canAgents = user.permissions.includes('agents.manage');
   const [sedes, setSedes] = useState([]);
   const [sedeId, setSedeId] = useState('');
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     api('/sedes')
@@ -16,18 +19,46 @@ export default function Status() {
       .catch((err) => setError(err.message));
   }, []);
 
-  useEffect(() => {
-    if (!sedeId) return;
-    api(`/sedes/${sedeId}/status`)
+  function loadStatus() {
+    return api(`/sedes/${sedeId}/status`)
       .then(setStatus)
       .catch((err) => setError(err.message));
+  }
+
+  useEffect(() => {
+    if (!sedeId) return;
+    loadStatus();
   }, [sedeId]);
+
+  async function revokeAgent(agent) {
+    const label = agent.machine_id ?? `agente ${agent.id}`;
+    if (
+      !window.confirm(
+        `¿Revocar el agente "${label}"? La PC de la sede dejará de sincronizar hasta que se vuelva a enrolar con un código nuevo.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api(`/agents/${agent.id}/revoke`, { method: 'POST' });
+      setNotice(`Agente "${label}" revocado.`);
+      await loadStatus();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <section>
       <h2>Estado de sincronización</h2>
       <div className="sub">Última revisión publicada y resultado real reportado por el microservicio</div>
 
+      {notice && <div className="alert info">{notice}</div>}
       {error && <div className="alert error">{error}</div>}
 
       <div className="panel">
@@ -108,7 +139,17 @@ export default function Status() {
                 )}{' '}
                 <span className="muted">
                   último contacto: {agent.last_seen_at ? new Date(agent.last_seen_at).toLocaleString() : 'nunca'}
-                </span>
+                </span>{' '}
+                {canAgents && !agent.revoked_at && (
+                  <button
+                    className="btn-sm danger"
+                    style={{ padding: '3px 9px', fontSize: 12 }}
+                    disabled={busy}
+                    onClick={() => revokeAgent(agent)}
+                  >
+                    Revocar
+                  </button>
+                )}
               </div>
             ))}
           </div>

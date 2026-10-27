@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { openDatabase } from '../src/db.js';
 import { createApp } from '../src/app.js';
 import { ensureFirstUser } from '../src/bootstrap.js';
+import { seedRoles } from '../src/permissions.js';
 
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'admin12345';
@@ -290,4 +291,155 @@ test('a viewer is forbidden from the new write routes', async () => {
     const res = await api(path, { token, method, body: method === 'PATCH' ? { name: 'x' } : undefined });
     assert.equal(res.status, 403, `${method} ${path} must be forbidden`);
   }
+});
+
+async function createAgent(machineId) {
+  const sede = await json(await api('/api/sedes', { method: 'POST', body: { name: `Sede ${machineId}` } }));
+  const pairing = await json(await api(`/api/sedes/${sede.id}/pairing-code`, { method: 'POST' }));
+  const res = await fetch(`${base}/agent/enroll`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: pairing.code, machineId }),
+  });
+  assert.equal(res.status, 201);
+  const enrolled = await json(res);
+  return { sede, agentId: enrolled.agentId, token: enrolled.token };
+}
+
+test('POST agent revoke requires agents.manage, is idempotent and blocks sync', async () => {
+  const { agentId, token } = await createAgent('PC-REVOKE');
+
+  const anonymous = await fetch(`${base}/api/agents/${agentId}/revoke`, { method: 'POST' });
+  assert.equal(anonymous.status, 401);
+
+  await createUser('no.agents', ['viewer'], 'noAgentsPassword123');
+  const viewerToken = await login('no.agents', 'noAgentsPassword123');
+  const forbidden = await api(`/api/agents/${agentId}/revoke`, { token: viewerToken, method: 'POST' });
+  assert.equal(forbidden.status, 403);
+
+  const missing = await api('/api/agents/999999/revoke', { method: 'POST' });
+  assert.equal(missing.status, 404);
+
+  const first = await api(`/api/agents/${agentId}/revoke`, { method: 'POST' });
+  assert.equal(first.status, 200);
+  const firstBody = await json(first);
+  assert.equal(firstBody.id, agentId);
+  assert.ok(firstBody.revoked_at);
+
+  const second = await api(`/api/agents/${agentId}/revoke`, { method: 'POST' });
+  assert.equal(second.status, 200);
+  assert.equal((await json(second)).revoked_at, firstBody.revoked_at);
+
+  const sync = await fetch(`${base}/agent/sync`, { headers: { authorization: `Bearer ${token}` } });
+  assert.equal(sync.status, 403);
+});
+
+test('POST role creates a role with an explicit key and permissions', async () => {
+  const res = await api('/api/roles', {
+    method: 'POST',
+    body: { name: 'Supervisor', key: 'supervisor', permissions: ['articles.read'] },
+  });
+  assert.equal(res.status, 201);
+  assert.deepEqual(await json(res), {
+    key: 'supervisor',
+    name: 'Supervisor',
+    permissions: ['articles.read'],
+  });
+});
+
+test('POST role derives a url-safe key from an accented name', async () => {
+  const res = await api('/api/roles', {
+    method: 'POST',
+    body: { name: 'Auditoría de Caja', permissions: ['status.read'] },
+  });
+  assert.equal(res.status, 201);
+  const body = await json(res);
+  assert.equal(body.key, 'auditoria-de-caja');
+  assert.equal(body.name, 'Auditoría de Caja');
+});
+
+test('POST role rejects duplicate keys and unknown permissions', async () => {
+  const duplicate = await api('/api/roles', {
+    method: 'POST',
+    body: { name: 'Otro supervisor', key: 'supervisor' },
+  });
+  assert.equal(duplicate.status, 409);
+  assert.match((await json(duplicate)).error, /role already exists/);
+
+  const unknown = await api('/api/roles', {
+    method: 'POST',
+    body: { name: 'Roto', key: 'roto', permissions: ['does.not.exist'] },
+  });
+  assert.equal(unknown.status, 422);
+  assert.equal(db.get('SELECT id FROM roles WHERE key = ?', 'roto'), undefined);
+});
+
+test('PATCH role renames and rejects unknown or empty names', async () => {
+  await api('/api/roles', { method: 'POST', body: { name: 'Renombrar', key: 'renombrar' } });
+
+  const ok = await api('/api/roles/renombrar', { method: 'PATCH', body: { name: 'Renombrado' } });
+  assert.equal(ok.status, 200);
+  const renamed = await json(ok);
+  assert.equal(renamed.key, 'renombrar');
+  assert.equal(renamed.name, 'Renombrado');
+  assert.equal(db.get('SELECT name FROM roles WHERE key = ?', 'renombrar').name, 'Renombrado');
+
+  const missing = await api('/api/roles/no-existe', { method: 'PATCH', body: { name: 'X' } });
+  assert.equal(missing.status, 404);
+
+  const empty = await api('/api/roles/renombrar', { method: 'PATCH', body: { name: '   ' } });
+  assert.equal(empty.status, 422);
+});
+
+test('DELETE role removes it, but guards admin and roles assigned to users', async () => {
+  await api('/api/roles', { method: 'POST', body: { name: 'Temporal', key: 'temporal' } });
+  const ok = await api('/api/roles/temporal', { method: 'DELETE' });
+  assert.equal(ok.status, 200);
+  assert.equal(db.get('SELECT id FROM roles WHERE key = ?', 'temporal'), undefined);
+
+  const missing = await api('/api/roles/no-existe', { method: 'DELETE' });
+  assert.equal(missing.status, 404);
+
+  const admin = await api('/api/roles/admin', { method: 'DELETE' });
+  assert.equal(admin.status, 422);
+  assert.match((await json(admin)).error, /admin role cannot be deleted/);
+
+  await api('/api/roles', { method: 'POST', body: { name: 'Asignado', key: 'asignado' } });
+  await createUser('assigned.role', ['asignado']);
+  const assigned = await api('/api/roles/asignado', { method: 'DELETE' });
+  assert.equal(assigned.status, 409);
+  assert.match((await json(assigned)).error, /assigned to 1 user/);
+});
+
+test('PUT admin permissions cannot remove users.manage', async () => {
+  const roles = await json(await api('/api/roles'));
+  const admin = roles.roles.find((role) => role.key === 'admin');
+  const withoutUsersManage = admin.permissions.filter((permission) => permission !== 'users.manage');
+
+  const res = await api('/api/roles/admin/permissions', {
+    method: 'PUT',
+    body: { permissions: withoutUsersManage },
+  });
+  assert.equal(res.status, 422);
+  assert.match((await json(res)).error, /admin role must keep users.manage/);
+
+  const after = await json(await api('/api/roles'));
+  assert.ok(after.roles.find((role) => role.key === 'admin').permissions.includes('users.manage'));
+});
+
+test('seedRoles leaves a custom role and its permissions untouched', async () => {
+  const res = await api('/api/roles', {
+    method: 'POST',
+    body: { name: 'Personalizado', key: 'personalizado', permissions: ['articles.read', 'status.read'] },
+  });
+  assert.equal(res.status, 201);
+
+  seedRoles(db);
+
+  const role = db.get('SELECT * FROM roles WHERE key = ?', 'personalizado');
+  assert.ok(role);
+  const permissions = db
+    .all('SELECT permission FROM role_permissions WHERE role_id = ? ORDER BY permission', role.id)
+    .map((row) => row.permission);
+  assert.deepEqual(permissions, ['articles.read', 'status.read']);
 });

@@ -1,6 +1,42 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 
+function PermissionMatrix({ permissions, selected, onToggle, disabled = false }) {
+  const sections = [...new Set(permissions.map((permission) => permission.section))];
+  return (
+    <div>
+      {sections.map((section) => (
+        <div key={section} style={{ marginTop: 10 }}>
+          <div className="muted" style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+            {section}
+          </div>
+          <div className="pill-list">
+            {permissions
+              .filter((permission) => permission.section === section)
+              .map((permission) => (
+                <label
+                  key={permission.key}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(permission.key)}
+                    disabled={disabled}
+                    onChange={() => onToggle(permission.key)}
+                  />
+                  <span>{permission.action}</span>
+                  <span className="mono muted" style={{ fontSize: 11 }}>
+                    {permission.key}
+                  </span>
+                </label>
+              ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Users({ user: currentUser }) {
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
@@ -14,6 +50,9 @@ export default function Users({ user: currentUser }) {
   const [passwordFor, setPasswordFor] = useState(null);
   const [newPassword, setNewPassword] = useState('');
   const [roleDrafts, setRoleDrafts] = useState({});
+  const [permissionDrafts, setPermissionDrafts] = useState({});
+  const [renamingRole, setRenamingRole] = useState(null);
+  const [newRole, setNewRole] = useState({ name: '', permissions: [] });
 
   async function load() {
     const [usersData, rolesData] = await Promise.all([api('/users'), api('/roles')]);
@@ -21,6 +60,8 @@ export default function Users({ user: currentUser }) {
     setRoles(rolesData.roles);
     setPermissions(rolesData.permissions);
     setRoleDrafts({});
+    setPermissionDrafts({});
+    setRenamingRole(null);
   }
 
   useEffect(() => {
@@ -169,6 +210,114 @@ export default function Users({ user: currentUser }) {
     }
   }
 
+  function samePermissions(left, right) {
+    return left.length === right.length && left.every((key) => right.includes(key));
+  }
+
+  function permissionDraft(role) {
+    return permissionDrafts[role.key] ?? role.permissions;
+  }
+
+  function hasPermissionDraft(role) {
+    return Boolean(permissionDrafts[role.key]) && !samePermissions(permissionDrafts[role.key], role.permissions);
+  }
+
+  function togglePermission(role, permissionKey) {
+    const current = permissionDraft(role);
+    const next = current.includes(permissionKey)
+      ? current.filter((key) => key !== permissionKey)
+      : [...current, permissionKey];
+    setPermissionDrafts((drafts) => {
+      const updated = { ...drafts };
+      if (samePermissions(next, role.permissions)) delete updated[role.key];
+      else updated[role.key] = next;
+      return updated;
+    });
+  }
+
+  async function savePermissions(role) {
+    const draft = permissionDrafts[role.key];
+    if (!draft) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api(`/roles/${role.key}/permissions`, { method: 'PUT', body: { permissions: draft } });
+      setNotice(`Permisos del rol "${role.name}" actualizados.`);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startRenameRole(role) {
+    setRenamingRole({ key: role.key, name: role.name });
+    setError(null);
+    setNotice(null);
+  }
+
+  async function renameRole(role) {
+    if (!renamingRole) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api(`/roles/${role.key}`, { method: 'PATCH', body: { name: renamingRole.name } });
+      setNotice(`Rol "${renamingRole.name}" renombrado.`);
+      setRenamingRole(null);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeRole(role) {
+    if (!window.confirm(`¿Eliminar el rol "${role.name}"? Esta acción no se puede deshacer.`)) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api(`/roles/${role.key}`, { method: 'DELETE' });
+      setNotice(`Rol "${role.name}" eliminado.`);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleNewRolePermission(permissionKey) {
+    setNewRole((current) => ({
+      ...current,
+      permissions: current.permissions.includes(permissionKey)
+        ? current.permissions.filter((key) => key !== permissionKey)
+        : [...current.permissions, permissionKey],
+    }));
+  }
+
+  async function createRole(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api('/roles', { method: 'POST', body: { name: newRole.name, permissions: newRole.permissions } });
+      setNotice(`Rol "${newRole.name}" creado.`);
+      setNewRole({ name: '', permissions: [] });
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const canManageRoles = currentUser.permissions.includes('users.manage');
   const sections = [...new Set(permissions.map((permission) => permission.section))];
 
   return (
@@ -447,6 +596,134 @@ export default function Users({ user: currentUser }) {
           </tbody>
         </table>
       </div>
+
+      {canManageRoles && (
+        <div className="panel">
+          <h3 style={{ marginTop: 0, fontSize: 16 }}>Roles</h3>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+            Un rol agrupa permisos. Los cambios se aplican en el siguiente request de cada usuario.
+          </div>
+
+          {roles.map((role) => {
+            const draft = permissionDraft(role);
+            const assigned = users.filter((user) => user.roles.includes(role.key)).length;
+            return (
+              <div key={role.key} style={{ borderTop: '1px solid var(--line)', paddingTop: 12, marginTop: 12 }}>
+                <div className="row" style={{ alignItems: 'center' }}>
+                  <div>
+                    <strong>{role.name}</strong>{' '}
+                    <span className="mono muted" style={{ fontSize: 12 }}>
+                      {role.key}
+                    </span>{' '}
+                    <span className="badge muted">{draft.length} permisos</span>
+                    {assigned > 0 && (
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        {' '}
+                        · asignado a {assigned} usuario(s)
+                      </span>
+                    )}
+                  </div>
+                  <div className="tight" style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      type="button"
+                      className="btn-sm"
+                      disabled={busy || !hasPermissionDraft(role)}
+                      onClick={() => savePermissions(role)}
+                    >
+                      Guardar permisos
+                    </button>
+                    <button type="button" className="btn-sm ghost" disabled={busy} onClick={() => startRenameRole(role)}>
+                      Renombrar
+                    </button>
+                    {role.key !== 'admin' && (
+                      <button
+                        type="button"
+                        className="btn-sm danger"
+                        disabled={busy || assigned > 0}
+                        title={assigned > 0 ? 'No se puede eliminar: el rol está asignado a usuarios' : undefined}
+                        onClick={() => removeRole(role)}
+                      >
+                        Eliminar
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {renamingRole?.key === role.key && (
+                  <div className="row" style={{ marginTop: 10 }}>
+                    <div>
+                      <label htmlFor={`rename-role-${role.key}`}>Nombre del rol</label>
+                      <input
+                        id={`rename-role-${role.key}`}
+                        value={renamingRole.name}
+                        maxLength={60}
+                        onChange={(event) => setRenamingRole({ ...renamingRole, name: event.target.value })}
+                        required
+                      />
+                    </div>
+                    <div className="tight" style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        type="button"
+                        className="btn-sm"
+                        disabled={busy || !renamingRole.name.trim()}
+                        onClick={() => renameRole(role)}
+                      >
+                        Guardar
+                      </button>
+                      <button type="button" className="btn-sm ghost" disabled={busy} onClick={() => setRenamingRole(null)}>
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {assigned > 0 && role.key !== 'admin' && (
+                  <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                    No se puede eliminar: el rol está asignado a usuarios.
+                  </div>
+                )}
+
+                <PermissionMatrix
+                  permissions={permissions}
+                  selected={draft}
+                  disabled={busy}
+                  onToggle={(permissionKey) => togglePermission(role, permissionKey)}
+                />
+              </div>
+            );
+          })}
+
+          <div style={{ borderTop: '1px solid var(--line)', marginTop: 16, paddingTop: 12 }}>
+            <h3 style={{ marginTop: 0, fontSize: 15 }}>Nuevo rol</h3>
+            <form onSubmit={createRole}>
+              <div style={{ maxWidth: 320 }}>
+                <label htmlFor="new-role-name">Nombre del rol</label>
+                <input
+                  id="new-role-name"
+                  value={newRole.name}
+                  maxLength={60}
+                  onChange={(event) => setNewRole({ ...newRole, name: event.target.value })}
+                  required
+                />
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <label>Permisos</label>
+                <PermissionMatrix
+                  permissions={permissions}
+                  selected={newRole.permissions}
+                  disabled={busy}
+                  onToggle={toggleNewRolePermission}
+                />
+              </div>
+              <div className="actions">
+                <button type="submit" disabled={busy || !newRole.name.trim()}>
+                  {busy ? 'Creando…' : 'Crear rol'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

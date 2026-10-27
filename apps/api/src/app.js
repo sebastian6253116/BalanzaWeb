@@ -341,6 +341,21 @@ export function createApp({
     return roles;
   }
 
+  /** Derive a stable, URL-safe role key from a display name. */
+  function deriveRoleKey(name) {
+    return name
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  function rolePermissions(role) {
+    return db.all('SELECT permission FROM role_permissions WHERE role_id = ? ORDER BY permission', role.id)
+      .map((row) => row.permission);
+  }
+
   const routes = [
     // ---- authentication ----
     {
@@ -657,6 +672,25 @@ export function createApp({
     },
     {
       method: 'POST',
+      pattern: /^\/api\/agents\/(\d+)\/revoke$/,
+      permission: 'agents.manage',
+      handler: async (req, res, [agentId]) => {
+        const agent = db.get('SELECT * FROM agents WHERE id = ?', Number(agentId));
+        if (!agent) return fail(res, 404, 'agent not found');
+        const revokedAt = agent.revoked_at ?? now();
+        if (!agent.revoked_at) {
+          db.run('UPDATE agents SET revoked_at = ? WHERE id = ?', revokedAt, agent.id);
+        }
+        return json(res, 200, {
+          id: agent.id,
+          machine_id: agent.machine_id,
+          sede_id: agent.sede_id,
+          revoked_at: revokedAt,
+        });
+      },
+    },
+    {
+      method: 'POST',
       pattern: /^\/api\/sedes\/(\d+)\/deployments$/,
       permission: 'deployments.create',
       handler: async (req, res, [sedeId]) => {
@@ -872,28 +906,94 @@ export function createApp({
         const roles = db.all('SELECT * FROM roles ORDER BY key').map((role) => ({
           key: role.key,
           name: role.name,
-          permissions: db.all('SELECT permission FROM role_permissions WHERE role_id = ?', role.id).map((p) => p.permission),
+          permissions: rolePermissions(role),
         }));
         return json(res, 200, { roles, permissions: PERMISSIONS });
       },
     },
     {
-      method: 'PUT',
-      pattern: /^\/api\/roles\/([a-z]+)\/permissions$/,
+      method: 'POST',
+      pattern: /^\/api\/roles$/,
+      permission: 'users.manage',
+      handler: async (req, res) => {
+        const body = await readJson(req);
+        const name = typeof body.name === 'string' ? body.name.trim() : '';
+        if (!name) return fail(res, 422, 'name is required');
+        if (name.length > 60) return fail(res, 422, 'name must be 60 characters or fewer');
+
+        const explicitKey = body.key === undefined || body.key === null || String(body.key).trim() === ''
+          ? null
+          : String(body.key).trim().toLowerCase();
+        const key = explicitKey ?? deriveRoleKey(name);
+        if (!/^[a-z0-9][a-z0-9_-]{1,31}$/.test(key)) return fail(res, 422, 'invalid role key');
+
+        const wanted = Array.isArray(body.permissions) ? [...new Set(body.permissions)] : [];
+        const unknown = wanted.filter((permission) => !PERMISSION_KEYS.includes(permission));
+        if (unknown.length) return fail(res, 422, `unknown permissions: ${unknown.join(', ')}`);
+        if (db.get('SELECT id FROM roles WHERE key = ?', key)) return fail(res, 409, 'role already exists');
+
+        db.run('INSERT INTO roles (key, name) VALUES (?, ?)', key, name);
+        const role = db.get('SELECT * FROM roles WHERE key = ?', key);
+        for (const permission of wanted) {
+          db.run('INSERT INTO role_permissions (role_id, permission) VALUES (?, ?)', role.id, permission);
+        }
+        return json(res, 201, { key: role.key, name: role.name, permissions: rolePermissions(role) });
+      },
+    },
+    {
+      method: 'PATCH',
+      pattern: /^\/api\/roles\/([a-z0-9][a-z0-9_-]*)$/,
       permission: 'users.manage',
       handler: async (req, res, [roleKey]) => {
         const role = db.get('SELECT * FROM roles WHERE key = ?', roleKey);
         if (!role) return fail(res, 404, 'role not found');
         const body = await readJson(req);
-        const wanted = Array.isArray(body.permissions) ? body.permissions : [];
+        const name = typeof body.name === 'string' ? body.name.trim() : '';
+        if (!name) return fail(res, 422, 'name is required');
+        if (name.length > 60) return fail(res, 422, 'name must be 60 characters or fewer');
+
+        db.run('UPDATE roles SET name = ? WHERE id = ?', name, role.id);
+        return json(res, 200, { key: role.key, name, permissions: rolePermissions(role) });
+      },
+    },
+    {
+      method: 'DELETE',
+      pattern: /^\/api\/roles\/([a-z0-9][a-z0-9_-]*)$/,
+      permission: 'users.manage',
+      handler: async (req, res, [roleKey]) => {
+        const role = db.get('SELECT * FROM roles WHERE key = ?', roleKey);
+        if (!role) return fail(res, 404, 'role not found');
+        if (role.key === 'admin') return fail(res, 422, 'the admin role cannot be deleted');
+
+        const assigned = db.get('SELECT COUNT(*) AS n FROM user_roles WHERE role_id = ?', role.id).n;
+        if (assigned > 0) return fail(res, 409, `role is assigned to ${assigned} user(s)`);
+
+        db.run('DELETE FROM role_permissions WHERE role_id = ?', role.id);
+        db.run('DELETE FROM user_roles WHERE role_id = ?', role.id);
+        db.run('DELETE FROM roles WHERE id = ?', role.id);
+        return json(res, 200, { ok: true, key: role.key });
+      },
+    },
+    {
+      method: 'PUT',
+      pattern: /^\/api\/roles\/([a-z0-9][a-z0-9_-]*)\/permissions$/,
+      permission: 'users.manage',
+      handler: async (req, res, [roleKey]) => {
+        const role = db.get('SELECT * FROM roles WHERE key = ?', roleKey);
+        if (!role) return fail(res, 404, 'role not found');
+        const body = await readJson(req);
+        const wanted = Array.isArray(body.permissions) ? [...new Set(body.permissions)] : [];
         const unknown = wanted.filter((p) => !PERMISSION_KEYS.includes(p));
         if (unknown.length) return fail(res, 422, `unknown permissions: ${unknown.join(', ')}`);
+        if (role.key === 'admin' && !wanted.includes('users.manage')) {
+          return fail(res, 422, 'the admin role must keep users.manage');
+        }
 
         db.run('DELETE FROM role_permissions WHERE role_id = ?', role.id);
         for (const permission of wanted) db.run('INSERT INTO role_permissions (role_id, permission) VALUES (?, ?)', role.id, permission);
         return json(res, 200, {
           key: role.key,
-          permissions: db.all('SELECT permission FROM role_permissions WHERE role_id = ?', role.id).map((p) => p.permission),
+          permissions: rolePermissions(role),
         });
       },
     },
