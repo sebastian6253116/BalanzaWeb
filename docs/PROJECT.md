@@ -281,16 +281,19 @@ node --test packages/plu-format/test/plu-format.test.js `
 | Hecho | **Despliegue en VPS + HTTPS** | Corriendo en Dokploy (Docker + Traefik + Let's Encrypt) desde `main`, con auto-deploy. Ver sección 15 |
 | Hecho | **Maestro de artículos en producción** | 832 artículos cargados con `PUT /api/articles` y persistidos en el volumen. 23 tienen precio 0 en el archivo original |
 | Hecho | **Administración completa de sedes, balanzas y usuarios** | Alta, baja y edición; ver sección 15 |
-| Alta | **Probar el flujo completo con hardware**: sede + balanza + publicación + agente real | Es lo único que falta para cerrar el circuito. Requiere la PC en la red `192.168.0.x` |
+| Hecho | **Flujo completo con hardware**: sede + balanza + publicación + agente real | Agente 1.0.1 instalado y enrolado en dos sedes; publicaciones reales aplicadas en las balanzas que responden |
+| Alta | **Balanzas que rechazan `start` en DR PORTILLO** (`.200`, `.202`, `.203`; CHARCUTERIA `.201` responde bien) | Contesta `hello` pero no abre la sesión de descarga. ARP y ping limpios, sin IP duplicada. Falta apagar/encender una balanza, revisar la IP de maestro configurada contra la de la PC (`ipconfig`) y cerrar software del fabricante abierto |
 | Alta | Revisar los **23 artículos con precio 0** antes de publicar | Pueden llegar a la balanza con precio cero |
 | Media | **MySQL** | SQLite alcanza para una sede; varias sedes simultáneas necesitan servidor. La API es síncrona, migrar exige volver async los handlers |
 | Media | **Decidir la firma del `.exe` del agente** | Sin firma, SmartScreen puede advertir en la sede; un certificado autofirmado no lo resuelve |
+| Media | **`probe --full`**: extender el diagnóstico a `hello` → `start` → `goodbye` | Hoy `probe` sólo prueba el `hello`, justo el paso que sí funciona cuando falla la sesión |
 | Media | **Cerrar las incógnitas abiertas del protocolo** (sección 11): `D204`, bytes `[93..123]`, obligatoriedad de `D207` y las **10 unidades sin confirmar** | Son datos inferidos; requieren capturas o pruebas en hardware |
+| Media | **Backoff o estado "sin conexión"** para el reintento de una balanza caída | Hoy reintenta cada 60 s sin espaciar y llena el historial de fallos idénticos |
 | Baja | Aislar cuál de los tres defectos del catálogo original disparaba el aborto | Se puede hacer con el CLI, sin GUI |
 | Baja | Actualizar el texto de `Sedes.jsx` que todavía muestra `balanza-agent enroll ...` | La instalación ya usa la ventana de conexión; el texto quedó viejo |
-| Baja | Reutilizar `.table-cards` en las demás tablas | Solo la tabla de usuarios se vuelve tarjetas; el resto sigue con scroll horizontal en móvil |
+| Baja | Reutilizar `.table-cards` en las demás tablas | Sólo la tabla de usuarios se vuelve tarjetas; el resto sigue con scroll horizontal en móvil |
 | Baja | Unificar `camelCase`/`snake_case` en las respuestas de la API | Hoy artículos es camelCase y sedes/balanzas snake_case |
-| Baja | Importar/exportar `.Txp` desde la web | Hoy la carga masiva es por API |
+| Hecho | **Exportar el maestro desde la web** (`.Txp`, `.xlsx` de trabajo y `.xlsx` para el fabricante) | La reimportación desde Excel se descartó por decisión del usuario: el Excel es sólo de salida |
 | Baja | Paginado del lado del servidor | Con 832 artículos no hace falta; importa al crecer |
 
 ## 11. Incógnitas abiertas del protocolo
