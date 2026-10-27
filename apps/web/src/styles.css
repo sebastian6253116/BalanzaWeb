@@ -468,7 +468,15 @@ tbody.is-loading { opacity: 0.4; transition: opacity 0.15s ease; }
   .auth-foot { display: none; }
   .auth-panel { padding: 26px 18px 40px; }
 
-  .app { grid-template-columns: 1fr; }
+  /* The app is a grid with min-height: 100dvh. With implicit (auto) rows the
+     default align-content: stretch splits the leftover viewport height between
+     the topbar and the main row, so the bar grew to a third of the screen on a
+     phone. Explicit rows keep the bar at its content height and give the rest to
+     the content. */
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
 
   .topbar {
     display: flex;
@@ -479,8 +487,11 @@ tbody.is-loading { opacity: 0.4; transition: opacity 0.15s ease; }
     z-index: 20;
     background: #10202e;
     color: #fff;
-    padding: 10px 12px;
+    padding: 8px 12px;
+    min-height: 0;
+    flex-shrink: 0;
   }
+  .topbar .icon-btn { padding: 6px; }
   .topbar-title { font-weight: 600; font-size: 15px; flex: 1; }
   .topbar-user { font-size: 12px; color: #9fbdd4; }
 
