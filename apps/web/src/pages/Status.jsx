@@ -56,7 +56,7 @@ export default function Status({ user }) {
   return (
     <section>
       <h2>Estado de sincronización</h2>
-      <div className="sub">Última revisión publicada y resultado real reportado por el microservicio</div>
+      <div className="sub">Última revisión publicada y resultado del último envío reportado por el agente</div>
 
       {notice && <div className="alert info">{notice}</div>}
       {error && <div className="alert error">{error}</div>}
@@ -99,8 +99,8 @@ export default function Status({ user }) {
                 <tr>
                   <th>Balanza</th>
                   <th>Dirección</th>
-                  <th>Resultado</th>
-                  <th>Última conexión</th>
+                  <th>Resultado del envío</th>
+                  <th>Último envío</th>
                 </tr>
               </thead>
               <tbody>
@@ -125,6 +125,10 @@ export default function Status({ user }) {
               </tbody>
             </table>
           </div>
+          <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>
+            Las balanzas sólo reportan cuando reciben un envío. El resultado y la fecha reflejan ese último
+            envío, no su estado actual.
+          </p>
 
           <div className="panel">
             <label>Agentes de la sede</label>

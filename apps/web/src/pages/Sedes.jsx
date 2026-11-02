@@ -202,8 +202,8 @@ export default function Sedes({ user }) {
                 <tr>
                   <th>Nombre</th>
                   <th>Dirección</th>
-                  <th>Último resultado</th>
-                  <th>Última conexión</th>
+                  <th>Resultado del envío</th>
+                  <th>Último envío</th>
                   {canScales && <th className="actions-col" />}
                 </tr>
               </thead>
