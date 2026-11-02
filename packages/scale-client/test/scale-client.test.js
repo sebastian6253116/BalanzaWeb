@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import dgram from 'node:dgram';
 
 import { buildRecord, verifyChecksum } from '../../plu-format/src/index.js';
-import { pushPlu, probeScale, ScaleError } from '../src/index.js';
+import { pushPlu, probeScale, probeFull, ScaleError } from '../src/index.js';
 
 function fakeRow(overrides = {}) {
   return {
@@ -104,6 +104,56 @@ test('probe reads the model string from the hello reply', async () => {
   try {
     const result = await probeScale({ host: '127.0.0.1', port: scale.port, timeoutMs: 300 });
     assert.match(result.model, /RONGTA_PV2\.0/);
+  } finally {
+    await scale.close();
+  }
+});
+
+test('full probe walks hello, start and goodbye in order', async () => {
+  const scale = await startFakeScale();
+  try {
+    const progress = [];
+    const result = await probeFull({
+      host: '127.0.0.1',
+      port: scale.port,
+      timeoutMs: 300,
+      onProgress: (step) => progress.push(step.label),
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.host, '127.0.0.1');
+    assert.deepEqual(result.steps.map((step) => step.label), ['hello', 'start', 'goodbye']);
+    assert.deepEqual(progress, ['hello', 'start', 'goodbye'], 'progress must follow the order sent');
+    for (const step of result.steps) {
+      assert.equal(typeof step.attempt, 'number');
+      assert.equal(typeof step.ms, 'number');
+      assert.equal(typeof step.replyLength, 'number');
+    }
+
+    assert.equal(scale.received.length, 3);
+    assert.equal(scale.received[0][1], 0x01, 'first frame is hello');
+    assert.equal(scale.received[1][0], 0xd2);
+    assert.equal(scale.received[1][1], 0x01, 'second frame is start');
+    assert.equal(scale.received[2][0], 0x0e);
+    assert.equal(scale.received[2][1], 0x02, 'third frame is goodbye');
+  } finally {
+    await scale.close();
+  }
+});
+
+test('full probe fails at start and keeps the completed hello step', async () => {
+  // Index 0 is hello (answered), index 1 is start (dropped).
+  const scale = await startFakeScale({ dropFrameIndex: 1 });
+  try {
+    await assert.rejects(
+      probeFull({ host: '127.0.0.1', port: scale.port, timeoutMs: 100, retries: 1 }),
+      (err) => {
+        assert.ok(err instanceof ScaleError);
+        assert.match(err.message, /^start: no acknowledgement after 1 attempt\(s\)$/);
+        assert.deepEqual(err.details.steps.map((step) => step.label), ['hello']);
+        return true;
+      },
+    );
   } finally {
     await scale.close();
   }

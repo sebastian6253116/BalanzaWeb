@@ -82,13 +82,20 @@ test('every captured client frame passes the additive checksum', () => {
   assert.ok(checked >= 14);
 });
 
+test('hello writes the date as year, month, day', () => {
+  // 2026-11-02 09:05:07 local. Year 26 differs from day 02, so a swapped
+  // day/year order cannot pass this assertion.
+  const frame = buildHello(new Date(2026, 10, 2, 9, 5, 7));
+  assert.deepEqual([...frame.subarray(7, 13)], [0x26, 0x11, 0x02, 0x09, 0x05, 0x07]);
+});
+
 test('hello frame reproduces the captured bytes for its timestamp', () => {
   const captured = Buffer.from(templates['0e01'][0].hex, 'hex');
   const digit = (byte) => ((byte >> 4) & 0x0f) * 10 + (byte & 0x0f);
   const date = new Date(
-    2000 + digit(captured[9]),
+    2000 + digit(captured[7]),
     digit(captured[8]) - 1,
-    digit(captured[7]),
+    digit(captured[9]),
     digit(captured[10]),
     digit(captured[11]),
     digit(captured[12]),

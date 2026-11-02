@@ -33,16 +33,23 @@ export function verifyChecksum(buf) {
   return checksum16(buf) === buf.readUInt16LE(buf.length - 2);
 }
 
-/** `0E 01` hello, carrying the client clock as packed BCD digits. */
+/**
+ * `0E 01` hello, carrying the client clock as packed BCD digits.
+ *
+ * Date order is year, month, day. The scale adopts this clock and prints it on
+ * labels, so a wrong order lands on every ticket. Verified on 2026-11-02:
+ * sending 02 11 26 made a scale print 26/11/2002, which proves byte 7 is the
+ * year.
+ */
 export function buildHello(date = new Date()) {
   const buf = Buffer.alloc(SESSION_FRAME_SIZE);
   buf[0] = 0x0e;
   buf[1] = 0x01;
   buf[3] = 0x34;
   buf[4] = 0x12;
-  buf[7] = encodeBcdByte(date.getDate());
+  buf[7] = encodeBcdByte(date.getFullYear() % 100);
   buf[8] = encodeBcdByte(date.getMonth() + 1);
-  buf[9] = encodeBcdByte(date.getFullYear() % 100);
+  buf[9] = encodeBcdByte(date.getDate());
   buf[10] = encodeBcdByte(date.getHours());
   buf[11] = encodeBcdByte(date.getMinutes());
   buf[12] = encodeBcdByte(date.getSeconds());

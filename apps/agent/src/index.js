@@ -4,10 +4,10 @@
  *
  *   balanza-agent enroll --api https://vps.example.com --code ABCDEFGH
  *   balanza-agent run
- *   balanza-agent once
+ *   balanza-agent once [--force]
  *   balanza-agent request-stop
  *   balanza-agent status
- *   balanza-agent probe --host <ip> [--port 5001]
+ *   balanza-agent probe --host <ip> [--port 5001] [--timeout 1000] [--retries 2] [--full]
  *   balanza-agent version
  *
  * No third-party runtime: the agent is plain Node plus the shared protocol packages.
@@ -19,7 +19,7 @@ import { loadConfig, saveConfig, defaultConfigPath, emptyState } from './config.
 import { defaultLogDir, stopFlagPath, pidPath, legacyConfigPath } from './paths.js';
 import { createLogger, installCrashHandlers } from './log.js';
 import { syncOnce } from './sync.js';
-import { probeScale, pushPlu } from '../../../packages/scale-client/src/index.js';
+import { probeFull, probeScale, pushPlu } from '../../../packages/scale-client/src/index.js';
 import pkg from '../package.json' with { type: 'json' };
 
 const stamp = () => new Date().toISOString();
@@ -79,11 +79,15 @@ async function once(flags) {
   const config = loadConfig(path);
   if (!config) throw new Error(`no configuration at ${path}; run "enroll" first`);
 
+  const force = Boolean(flags.force);
+  if (force) console.log('forced push: ignoring cached scale hashes');
+
   const result = await syncOnce({
     config,
     push: pushPlu,
     log: logger.log,
     persist: (next) => saveConfig(next, path),
+    force,
   });
   return result;
 }
@@ -175,6 +179,8 @@ async function requestStop() {
 
 const PROBE_HINT =
   'hint: the scale did not answer the hello frame. Check power, network and whether another program is holding the session.';
+const PROBE_START_HINT =
+  'hint: the scale answered hello but refused to start a transfer session. Close any vendor software holding the session and power-cycle the scale.';
 
 function positiveNumber(flags, key, fallback) {
   const raw = flags[key];
@@ -193,6 +199,27 @@ async function probe(flags) {
   const retries = positiveNumber(flags, 'retries', 2);
 
   let result;
+  if (flags.full) {
+    try {
+      result = await probeFull({
+        host,
+        port,
+        timeoutMs: timeout,
+        retries,
+        onProgress: (step) => console.log(`  ${step.label}: ${step.ms} ms`),
+      });
+    } catch (err) {
+      // Completed steps were already printed as they happened; pick the hint
+      // from them: a finished hello means the failure is in the session start.
+      const completed = err.details?.steps ?? [];
+      err.hint = completed.some((step) => step.label === 'hello') ? PROBE_START_HINT : PROBE_HINT;
+      throw err;
+    }
+
+    console.log(`session opened on ${host}:${port} in ${result.durationMs} ms`);
+    return;
+  }
+
   try {
     result = await probeScale({ host, port, timeoutMs: timeout, retries });
   } catch (err) {
@@ -267,7 +294,7 @@ async function main() {
         console.log(`balanza-agent ${pkg.version}`);
         break;
       default:
-        console.log('usage: balanza-agent enroll --api <url> --code <code> | run | once | request-stop | status | probe --host <ip> | version');
+        console.log('usage: balanza-agent enroll --api <url> --code <code> | run | once [--force] | request-stop | status | probe --host <ip> [--port 5001] [--timeout 1000] [--retries 2] [--full] | version');
         process.exitCode = 2;
     }
   } catch (err) {

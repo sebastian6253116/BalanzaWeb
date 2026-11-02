@@ -78,7 +78,7 @@ Timing on the 832-PLU run: 416 data frames in ~16 s (~26 datagrams/s).
 ### 3.1 `0E 01` — hello
 
 ```
-0E 01 00 34 12 00 00 DD MM YY hh mm ss 00 00 "RONGTA_PV2.0\0" 00 ... [sum]
+0E 01 00 34 12 00 00 YY MM DD hh mm ss 00 00 "RONGTA_PV2.0\0" 00 ... [sum]
          |           |  |  |  |  |  |
          |           |  |  |  |  +-- seconds, packed BCD (0x03)
          |           |  |  |  +----- minutes  (0x25)
@@ -89,6 +89,12 @@ Timing on the 832-PLU run: 416 data frames in ~16 s (~26 datagrams/s).
 
 Byte offsets: `[0]=0E [1]=01 [2]=00 [3..4]=34 12 [5..6]=00 00 [7..12]=date/time
 [13..14]=00 00 [15..]=model string NUL-padded to 259 [259..260]=checksum`.
+
+The date order is **year, month, day**, and the scale **adopts this clock**: it is the date
+printed on every label. The capture alone cannot prove the order, because it was taken on
+26/10/2026 and day `26` equals year `26`. Verified on 2026-11-02 by sending `02 11 26`: the
+scale printed **26/11/2002**, proving byte `[7]` is the year. No other frame in either capture
+carries a date, so this hello is the only clock transport we know of.
 
 Scale reply: **263-byte** payload starting `0E 01 00` followed by its model string
 (`RONGTA_PV2.0`). The reply's own trailing bytes were not isolated (`40 04 A5 49` observed).

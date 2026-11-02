@@ -120,6 +120,58 @@ export async function probeScale({ host, port = DEFAULT_PORT, timeoutMs = 1000, 
 }
 
 /**
+ * Probe the session handshake without transferring any records.
+ *
+ * `hello` proves reachability (and lets the scale adopt the PC clock); `start`
+ * proves the scale accepts a transfer session. Those two are independent: the
+ * DR PORTILLO failure mode had a healthy hello and a start that was never
+ * acknowledged, so a hello-only probe reported a working scale while every push
+ * failed. Splitting them tells the two situations apart.
+ *
+ * Replies: hello must be non-empty, start must be acknowledged, and goodbye is
+ * best-effort. On failure the steps that already passed travel in
+ * `err.details.steps` so the caller can print them.
+ */
+export async function probeFull({
+  host,
+  port = DEFAULT_PORT,
+  timeoutMs = 1000,
+  retries = 2,
+  onProgress = () => {},
+} = {}) {
+  if (!host) throw new TypeError('host is required');
+
+  const io = openSocket();
+  const startedAt = Date.now();
+  const steps = [];
+  const ctx = { host, port, timeoutMs, retries };
+  const record = (result) => {
+    const step = { label: result.label, attempt: result.attempt, ms: result.ms, replyLength: result.replyLength };
+    steps.push(step);
+    onProgress(step);
+    return step;
+  };
+
+  try {
+    record(await sendFrame(io, buildHello(), { ...ctx, label: 'hello', expectReply: true }));
+    record(await sendFrame(io, buildStart(), { ...ctx, label: 'start' }));
+
+    try {
+      record(await sendFrame(io, buildGoodbye(), { ...ctx, timeoutMs: Math.min(timeoutMs, 400), retries: 1, label: 'goodbye' }));
+    } catch {
+      // The session already opened; a missing goodbye ACK is not a failure.
+    }
+
+    return { host, port, ok: true, steps, durationMs: Date.now() - startedAt };
+  } catch (err) {
+    err.details = { ...(err.details ?? {}), steps };
+    throw err;
+  } finally {
+    io.socket.close();
+  }
+}
+
+/**
  * Push a full PLU catalog to one scale.
  *
  * @param {object} options

@@ -95,6 +95,53 @@ test('a scale whose content did not change is skipped', async () => {
   assert.equal(config.state.revision, 2);
 });
 
+test('force pushes every target scale even when the cached hash matches', async () => {
+  const config = makeConfig();
+  config.state.revision = 7;
+  const records = articles.map((a) => buildRecord(a));
+  config.state.scaleHashes[10] = hashRecords(records);
+  const fetchImpl = fakeFetch({ payload: payload(8) });
+  const pushedHosts = [];
+
+  const result = await syncOnce({
+    config,
+    fetchImpl,
+    push: async ({ host, records: pushedRecords }) => {
+      pushedHosts.push(host);
+      return { records: pushedRecords.length, framesSent: 9, durationMs: 4 };
+    },
+    persist: () => {},
+    force: true,
+  });
+
+  assert.deepEqual(pushedHosts, ['192.168.0.201'], 'the cached hash must not skip the scale');
+  assert.deepEqual(result.skipped, []);
+  assert.equal(result.pushed.length, 1);
+  assert.equal(result.failed, false);
+  assert.match(fetchImpl.calls[0].url, /revision=0$/, 'a forced push requests revision 0');
+  assert.equal(config.state.revision, 8, 'the revision still advances after a successful push');
+});
+
+test('force false still skips scales whose cached hash matches', async () => {
+  const config = makeConfig();
+  const records = articles.map((a) => buildRecord(a));
+  config.state.scaleHashes[10] = hashRecords(records);
+  const fetchImpl = fakeFetch({ payload: payload(2) });
+  let pushed = 0;
+
+  const result = await syncOnce({
+    config,
+    fetchImpl,
+    push: async () => { pushed++; },
+    persist: () => {},
+    force: false,
+  });
+
+  assert.equal(pushed, 0);
+  assert.deepEqual(result.skipped, [10]);
+  assert.match(fetchImpl.calls[0].url, /revision=0$/);
+});
+
 test('a failed push keeps the revision so it retries next poll', async () => {
   const config = makeConfig();
   const fetchImpl = fakeFetch({ payload: payload(3) });
@@ -138,12 +185,14 @@ test('the remote poll interval applies unless a local override is set', async ()
   assert.equal(override.pollIntervalSeconds, 300);
 });
 
-async function startFakeScale() {
+async function startFakeScale({ ackAll = false } = {}) {
   const socket = dgram.createSocket('udp4');
   socket.on('message', (msg, rinfo) => {
     const isHello = msg.length > 1 && msg[0] === 0x0e && msg[1] === 0x01;
-    if (!isHello) return;
-    const reply = Buffer.concat([Buffer.from([0x0e, 0x01, 0x00]), Buffer.from('RONGTA_PV2.0\0', 'latin1')]);
+    if (!isHello && !ackAll) return;
+    const reply = isHello
+      ? Buffer.concat([Buffer.from([0x0e, 0x01, 0x00]), Buffer.from('RONGTA_PV2.0\0', 'latin1')])
+      : Buffer.alloc(0);
     socket.send(reply, rinfo.port, rinfo.address);
   });
   await new Promise((resolve) => socket.bind(0, '127.0.0.1', resolve));
@@ -212,6 +261,47 @@ test('probe fails with a hint when nothing answers the hello', async () => {
   }
 });
 
+test('probe --full prints every step and confirms the session opened', async () => {
+  const { home, env } = tempAgentHome('balanza-probe-full-ok-');
+  const scale = await startFakeScale({ ackAll: true });
+
+  try {
+    const run = await runAgent(
+      ['probe', '--host', '127.0.0.1', '--port', String(scale.port), '--timeout', '300', '--full'],
+      env,
+    );
+    assert.equal(run.status, 0, `probe --full failed: ${run.stderr}`);
+    assert.match(run.stdout, /hello: \d+ ms/);
+    assert.match(run.stdout, /start: \d+ ms/);
+    assert.match(run.stdout, /goodbye: \d+ ms/);
+    assert.match(run.stdout, /session opened on 127\.0\.0\.1/);
+  } finally {
+    await scale.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('probe --full fails at start with its own hint after printing hello', async () => {
+  const { home, env } = tempAgentHome('balanza-probe-full-start-');
+  // This responder answers hello only, exactly like the DR PORTILLO scale.
+  const scale = await startFakeScale();
+
+  try {
+    const run = await runAgent(
+      ['probe', '--host', '127.0.0.1', '--port', String(scale.port), '--timeout', '100', '--retries', '1', '--full'],
+      env,
+    );
+    assert.equal(run.status, 1);
+    assert.match(run.stdout, /hello: \d+ ms/);
+    assert.doesNotMatch(run.stdout, /start: \d+ ms/);
+    assert.match(run.stderr, /start: no acknowledgement/);
+    assert.match(run.stderr, /answered hello but refused to start/);
+  } finally {
+    await scale.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('probe without a host fails with a clear message', () => {
   const { home, env } = tempAgentHome('balanza-probe-nohost-');
 
@@ -240,6 +330,8 @@ test('version prints the package version and the usage line lists it', () => {
       const usage = spawnSync(process.execPath, [agentScript, ...args], { env, encoding: 'utf8' });
       assert.equal(usage.status, 2);
       assert.match(usage.stdout, /version/, 'the usage line must list the version command');
+      assert.match(usage.stdout, /once \[--force\]/, 'the usage line must expose once --force');
+      assert.match(usage.stdout, /\[--full\]/, 'the usage line must expose probe --full');
     }
   } finally {
     rmSync(home, { recursive: true, force: true });

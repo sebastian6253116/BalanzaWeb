@@ -26,10 +26,14 @@ export async function syncOnce({
   log = () => {},
   timeoutMs = 1500,
   retries = 3,
+  force = false,
 }) {
   const state = config.state ?? { revision: 0, scaleHashes: {} };
+  // Asking for revision 0 makes the API answer with the current deployment
+  // instead of 304, which is what a forced push needs.
+  const revision = force ? 0 : state.revision ?? 0;
 
-  const response = await fetchImpl(`${config.apiUrl}/agent/sync?revision=${state.revision ?? 0}`, {
+  const response = await fetchImpl(`${config.apiUrl}/agent/sync?revision=${revision}`, {
     headers: { authorization: `Bearer ${config.token}` },
   });
 
@@ -61,7 +65,9 @@ export async function syncOnce({
   let failed = false;
 
   for (const scale of targets) {
-    if (state.scaleHashes?.[scale.id] === hash) {
+    // A forced push ignores the cache: every target must receive hello so the
+    // scale adopts the PC clock, even when its catalogue content is unchanged.
+    if (!force && state.scaleHashes?.[scale.id] === hash) {
       skipped.push(scale.id);
       log(`scale ${scale.name} (${scale.host}): content unchanged, skipped`);
       continue;
