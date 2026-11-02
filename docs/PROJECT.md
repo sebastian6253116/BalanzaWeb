@@ -1,10 +1,11 @@
 # BalanzaWeb — estado del proyecto
 
-Documento de traspaso. Última actualización: **2026-10-27**.
+Documento de traspaso. Última actualización: **2026-11-02**.
 
 **Estado en una línea:** desplegado en producción con Dokploy, catálogo real de 832
-artículos cargado, y pendiente la prueba de punta a punta con una balanza en la red
-de la sede.
+artículos cargado, agente 1.0.1 instalado en dos sedes con publicaciones reales sobre
+las balanzas que responden, y pendientes la instalación de la 1.0.2 (que corrige la
+fecha de las etiquetas) y las tres balanzas de DR PORTILLO que rechazan `start`.
 
 Resumen en una línea: web React en VPS + microservicio local que habla el
 **protocolo nativo** de las balanzas Rongta RLS1000 por **UDP**, sin instalar
@@ -169,9 +170,15 @@ POST /agent/report
   `apps/agent/package.json` y queda embebida en el SEA, así que el ejecutable la
   reporta sin necesitar Node.
 - `probe --host <ip>` manda el `hello` del protocolo y reporta modelo, tamaño de la
-  respuesta y latencia. Sirve para separar "la balanza no está en la red" de "el
-  protocolo falla", sin Node en la sede. `--port`, `--timeout` y `--retries` son
-  opcionales.
+  respuesta y latencia: mide **alcanzabilidad**, sin Node en la sede. Con `--full`
+  agrega `start` y `goodbye`, imprime cada paso con su latencia y separa la
+  alcanzabilidad de la **aceptación de la sesión de transferencia**: una balanza puede
+  contestar `hello` y rechazar `start`. `--port`, `--timeout`, `--retries` y `--full`
+  son opcionales.
+- `once --force` reenvía el catálogo a todas las balanzas de la sede ignorando el hash
+  guardado por balanza: pide la revisión 0, así que la API no responde 304. Es la forma
+  de que las balanzas adopten la fecha de la PC cuando su reloj quedó mal. Hay que
+  detener el servicio antes, para que dos procesos no empujen a las mismas balanzas.
 - En una instalación nueva sin `-ApiUrl` ni `-PairingCode`, `install.ps1` abre la
   ventana **BalanzaWeb - Conectar agente** (`configurar-agente.ps1`), salvo con
   `-Quiet` o sin sesión interactiva, donde deja el aviso en consola. Si ya existe
@@ -226,7 +233,7 @@ node --test packages/plu-format/test/plu-format.test.js `
                apps/web/test/barcode.test.js
 ```
 
-**101 tests, todos verdes.** Incluyen:
+**108 tests, todos verdes.** Incluyen:
 
 - Golden byte-a-byte de los **832 registros** y de **todas las tramas de control**
   contra las capturas reales (fixture inmutable `test/fixtures/plu-832-original.txp`).
@@ -268,7 +275,7 @@ node --test packages/plu-format/test/plu-format.test.js `
    autofirmado no es de confianza en otras PC y agrava la operación. La decisión de
    comprar un certificado real queda pendiente.
 10. **La versión del agente es independiente de la web y del API**: la fuente es
-    `apps/agent/package.json` (hoy `1.0.1`) y el tag de release es
+    `apps/agent/package.json` (hoy `1.0.2`) y el tag de release es
     `agent-v<version>`. La web y el API pueden avanzar sin volver a publicar el
     agente, y viceversa.
 
@@ -281,12 +288,14 @@ node --test packages/plu-format/test/plu-format.test.js `
 | Hecho | **Despliegue en VPS + HTTPS** | Corriendo en Dokploy (Docker + Traefik + Let's Encrypt) desde `main`, con auto-deploy. Ver sección 15 |
 | Hecho | **Maestro de artículos en producción** | 832 artículos cargados con `PUT /api/articles` y persistidos en el volumen. 23 tienen precio 0 en el archivo original |
 | Hecho | **Administración completa de sedes, balanzas y usuarios** | Alta, baja y edición; ver sección 15 |
-| Hecho | **Flujo completo con hardware**: sede + balanza + publicación + agente real | Agente 1.0.1 instalado y enrolado en dos sedes; publicaciones reales aplicadas en las balanzas que responden |
+| Hecho | **Flujo completo con hardware**: sede + balanza + publicación + agente real | Agente 1.0.1 instalado y enrolado en dos sedes; publicaciones reales aplicadas en las balanzas que responden. La 1.0.2 está publicada y pendiente de instalar |
 | Alta | **Balanzas que rechazan `start` en DR PORTILLO** (`.200`, `.202`, `.203`; CHARCUTERIA `.201` responde bien) | Contesta `hello` pero no abre la sesión de descarga. ARP y ping limpios, sin IP duplicada. Falta apagar/encender una balanza, revisar la IP de maestro configurada contra la de la PC (`ipconfig`) y cerrar software del fabricante abierto |
 | Alta | Revisar los **23 artículos con precio 0** antes de publicar | Pueden llegar a la balanza con precio cero |
+| Media | **Días de validez del catálogo**: 829 de 832 artículos tienen 364–366 días, el valor por defecto del archivo del fabricante | La balanza calcula vencimiento = su fecha + días de validez, así que la etiqueta muestra un vencimiento a un año aunque el reloj esté bien. Es dato maestro, se corrige por artículo en la web |
 | Media | **MySQL** | SQLite alcanza para una sede; varias sedes simultáneas necesitan servidor. La API es síncrona, migrar exige volver async los handlers |
 | Media | **Decidir la firma del `.exe` del agente** | Sin firma, SmartScreen puede advertir en la sede; un certificado autofirmado no lo resuelve |
-| Media | **`probe --full`**: extender el diagnóstico a `hello` → `start` → `goodbye` | Hoy `probe` sólo prueba el `hello`, justo el paso que sí funciona cuando falla la sesión |
+| Hecho | **`probe --full`**: extender el diagnóstico a `hello` → `start` → `goodbye` | Implementado en 1.0.2: imprime cada paso con su latencia y distingue la alcanzabilidad de la aceptación de la sesión, con una pista propia cuando la balanza contesta `hello` y rechaza `start` |
+| Hecho | **Fecha de etiqueta corregida**: el `hello` mandaba día, mes y año; el orden correcto es año, mes y día | Corregido en 1.0.2. El 2026-11-02 un push hacía que la balanza imprimiera `26/11/2002`. `once --force` aplica la fecha correcta a toda la sede |
 | Media | **Cerrar las incógnitas abiertas del protocolo** (sección 11): `D204`, bytes `[93..123]`, obligatoriedad de `D207` y las **10 unidades sin confirmar** | Son datos inferidos; requieren capturas o pruebas en hardware |
 | Media | **Backoff o estado "sin conexión"** para el reintento de una balanza caída | Hoy reintenta cada 60 s sin espaciar y llena el historial de fallos idénticos |
 | Baja | Aislar cuál de los tres defectos del catálogo original disparaba el aborto | Se puede hacer con el CLI, sin GUI |

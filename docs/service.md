@@ -45,7 +45,7 @@ balanzas. El agente es un único `.exe` autocontenido.
 
 ## 4. Construcción
 
-En una máquina de desarrollo con Node 22 y las dependencias instaladas:
+En una máquina de desarrollo con Node 24 y las dependencias instaladas:
 
 ```powershell
 npm install
@@ -57,8 +57,8 @@ npm run agent:winsw
 npm run agent:build
 ```
 
-Resultado: `apps/agent/dist/balanza-agent.exe` (alrededor de 80 MB, porque
-incluye el runtime de Node).
+Resultado: `apps/agent/dist/balanza-agent.exe` (alrededor de 89,7 MB, porque
+incluye el runtime de Node; eran 81,4 MB con Node 22).
 
 Para verificar el binario durante la construcción:
 
@@ -227,8 +227,11 @@ Get-Content -Encoding UTF8 "$env:ProgramData\BalanzaWeb\Agent\logs\agent.log" -T
 # Versión instalada en esa PC
 & "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" version
 
-# ¿Esta balanza contesta el saludo del protocolo?
+# ¿Esta balanza contesta el saludo del protocolo? (alcanzabilidad)
 & "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" probe --host 192.168.0.200
+
+# ¿Acepta además abrir una sesión de transferencia? (hello -> start -> goodbye)
+& "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" probe --host 192.168.0.200 --full
 ```
 
 El servicio debe figurar `Running`. El log debe mostrar `agent starting` y,

@@ -1,7 +1,7 @@
 # Instalación del agente en una sede
 
 Guía operativa: instalar el agente de BalanzaWeb en la PC de una sede, desde cero
-hasta el servicio corriendo y enrolado. Última actualización: **2026-10-27**.
+hasta el servicio corriendo y enrolado. Última actualización: **2026-11-02**.
 
 ## 1. Qué es y qué instala
 
@@ -72,21 +72,21 @@ administra el sistema. Cómo se genera y publica una versión nueva está en
 
 - Página de releases:
   <https://github.com/sebastian6253116/BalanzaWeb/releases>
-- Release de la versión 1.0.1:
-  <https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.1>
+- Release de la versión 1.0.2:
+  <https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.2>
 - Descarga directa del paquete:
-  <https://github.com/sebastian6253116/BalanzaWeb/releases/download/agent-v1.0.1/balanza-agent-1.0.1-win-x64.zip>
+  <https://github.com/sebastian6253116/BalanzaWeb/releases/download/agent-v1.0.2/balanza-agent-1.0.2-win-x64.zip>
 
-Para 1.0.1 el paquete es un único archivo:
+Para 1.0.2 el paquete es un único archivo de 40,87 MB:
 
 ```
-balanza-agent-1.0.1-win-x64.zip
+balanza-agent-1.0.2-win-x64.zip
 ```
 
 Su SHA-256 de referencia es:
 
 ```
-BE7EDE6E2C430C5DF757183ECDFCFF1290854D32060D3636BB26ABA83688B971
+1c9f615e130cb30a528e8a7446388b0868993dedb59a900e4ef6e52ca8892465
 ```
 
 **Verificación de integridad.** El zip se entrega junto con su SHA-256, que es el
@@ -94,14 +94,14 @@ valor que imprime `npm run agent:package` al generarlo (línea `sha256: ...`). E
 PC de la sede, en la carpeta donde está el zip:
 
 ```powershell
-Get-FileHash .\balanza-agent-1.0.1-win-x64.zip -Algorithm SHA256
+Get-FileHash .\balanza-agent-1.0.2-win-x64.zip -Algorithm SHA256
 ```
 
-El campo `Hash` tiene que coincidir **exactamente** con el valor de referencia. Si
-no coincide, el archivo llegó incompleto o fue alterado: no lo instale y pida el
-paquete de nuevo.
+El campo `Hash` tiene que coincidir con el valor de referencia. El valor hexadecimal
+es el mismo en mayúsculas o minúsculas. Si no coincide, el archivo llegó incompleto o
+fue alterado: no lo instale y pida el paquete de nuevo.
 
-> El hash de arriba es el del zip 1.0.1 publicado. Si se regenera el zip, aunque la
+> El hash de arriba es el del zip 1.0.2 publicado. Si se regenera el zip, aunque la
 > versión sea la misma, el hash cambia: hay que usar el que imprimió
 > `npm run agent:package` y quedó anotado en la release.
 
@@ -117,13 +117,13 @@ paquete de nuevo.
 - Si el zip descargado quedó bloqueado y el script no arranca, desbloquéelo:
 
   ```powershell
-  Unblock-File .\balanza-agent-1.0.1-win-x64.zip
+  Unblock-File .\balanza-agent-1.0.2-win-x64.zip
   ```
 
 ## 5. Paso 2 — instalar el servicio
 
 1. Descomprima el zip en una carpeta local, por ejemplo `C:\Instaladores\`. Windows
-   crea la carpeta `balanza-agent-1.0.1-win-x64` con todo el contenido plano:
+   crea la carpeta `balanza-agent-1.0.2-win-x64` con todo el contenido plano:
 
    ```
    balanza-agent.exe
@@ -145,7 +145,7 @@ paquete de nuevo.
 3. Ubíquese en la carpeta extraída (ajuste la ruta a la suya):
 
    ```powershell
-   Set-Location "C:\Instaladores\balanza-agent-1.0.1-win-x64"
+   Set-Location "C:\Instaladores\balanza-agent-1.0.2-win-x64"
    ```
 
 4. Confirme que están los archivos antes de ejecutar:
@@ -309,7 +309,7 @@ publicaciones todavía.
 & "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" version
 ```
 
-Esperado: `balanza-agent 1.0.1`. Si alguna vez hay que soportar esa PC, este es el
+Esperado: `balanza-agent 1.0.2`. Si alguna vez hay que soportar esa PC, este es el
 dato que hay que pedir: no hay otra forma de saber qué versión corre una vez
 instalada.
 
@@ -422,6 +422,7 @@ Consecuencias de reconectar:
 | `install.ps1` corta con `The service BalanzaWebAgent already exists. Run uninstall.ps1 first.` | Se instaló dos veces sin desinstalar. | Ejecutar `uninstall.ps1` **sin** `-Purge` y volver a instalar. |
 | El servicio no arranca (error 1053 o `Stopped` apenas se inicia) | Falta .NET Framework 4.8, rutas del XML inválidas, o el ejecutable está bloqueado/dañado. | Revisar `%ProgramData%\BalanzaWeb\Agent\logs\winsw\`, el XML, y probar `balanza-agent.exe status` a mano. |
 | El servicio corre pero el log muestra `FAILED - hello: no acknowledgement after 3 attempt(s)` | La balanza no responde: IP o puerto mal cargados, firewall, o la PC no está en la red local de la balanza. | Verificar `IP:PUERTO` en **Sedes y balanzas** (UDP **5001**), que la PC esté en la misma LAN y que nada bloquee el UDP saliente hacia la balanza. |
+| Las etiquetas salen con una fecha equivocada | La balanza perdió el reloj (corte de energía) y no recibe un `hello` desde entonces. | Corregir el reloj de la sede con `once --force` (sección 11.2). |
 | Aparece `El agente quedó enrolado, pero no se pudo reiniciar el servicio: ...` | La ventana se ejecutó sin permisos de administrador. | Abrir PowerShell como administrador y ejecutar `Restart-Service BalanzaWebAgent`. |
 
 ### 11.1 Diagnosticar una balanza que no responde (comando `probe`)
@@ -438,9 +439,10 @@ Para saber si el problema es de red o del equipo, desde la PC de la sede:
 ```
 
 Parámetros opcionales: `--port` (por defecto `5001`), `--timeout` en milisegundos
-(`1000`) y `--retries` (`2`).
+(`1000`), `--retries` (`2`) y `--full` (diagnóstico completo, al final de esta
+sección).
 
-**Si contesta**, el equipo y la red están bien:
+**Si contesta el saludo**, el equipo y la red están bien:
 
 ```
 hello reply from 192.168.0.203:5001 in 34 ms
@@ -464,6 +466,94 @@ una pista. El orden de descarte es:
 No hace falta tocar la web: el agente reintenta en cada ciclo y, cuando la balanza
 vuelve a contestar, la revisión avanza sola. Las balanzas que ya estaban al día no
 reciben el catálogo de nuevo: se saltean por hash.
+
+**Diagnóstico completo con `--full`.** Sin `--full`, `probe` solo prueba el saludo:
+distingue una balanza que no está en la red de una que contesta. Con `--full` abre
+además una sesión de transferencia completa, `hello` → `start` → `goodbye`, e imprime
+cada paso con su latencia:
+
+```powershell
+& "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" probe --host 192.168.0.203 --full
+```
+
+```
+  hello: 34 ms
+  start: 12 ms
+  goodbye: 8 ms
+session opened on 192.168.0.203:5001 in 61 ms
+```
+
+Eso separa dos fallas que el saludo solo no distingue:
+
+- **Falla en `hello`** con `hello: no acknowledgement after N attempt(s)`: la balanza
+  no contesta nada. Es un problema de red, de IP o de equipo apagado.
+- **`hello` responde y falla en `start`** con `start: no acknowledgement after N
+  attempt(s)` y la pista `the scale answered hello but refused to start a transfer
+  session. Close any vendor software holding the session and power-cycle the scale.`
+  El equipo y la red están bien, pero la balanza no abre la sesión de descarga: hay
+  software del fabricante con la sesión tomada o una sesión colgada. Cerrar ese
+  software y apagar/encender la balanza.
+
+El `hello` lleva la fecha y la hora de la PC, y la balanza las adopta como propias. Por
+eso `probe --full` también corrige el reloj de esa balanza: no manda el catálogo ni
+cambia ningún PLU. Para corregir todas las balanzas de la sede de una vez, ver 11.2.
+
+### 11.2 Corregir la fecha de las balanzas (etiquetas con fecha equivocada)
+
+La fecha que imprime la etiqueta sale del reloj de la balanza, y la balanza toma ese
+reloj del `hello` que manda el agente: el frame lleva la fecha de la PC. Una balanza
+que quedó sin energía puede volver con una fecha incorrecta y mantenerla hasta que
+reciba un `hello` nuevo.
+
+Un `once` normal no alcanza para corregirla. El agente saltea las balanzas cuyo
+contenido no cambió y, cuando la API responde 304, no envía nada: sin `hello`, el
+reloj no se actualiza. La forma de forzar el envío a todas las balanzas de la sede es
+`once --force`, que pide la revisión 0 e ignora el hash guardado por balanza.
+
+Detenga primero el servicio: dos procesos no deben estar empujando a las mismas
+balanzas al mismo tiempo. Todo se ejecuta en PowerShell **elevado**.
+
+1. Detener el servicio y confirmar que quedó parado:
+
+   ```powershell
+   Stop-Service BalanzaWebAgent
+   Get-Service BalanzaWebAgent
+   ```
+
+   `Status` tiene que decir `Stopped`.
+
+2. Ejecutar el envío forzado con el binario instalado:
+
+   ```powershell
+   & "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" once --force
+   ```
+
+3. Confirmar la salida. Primero aparece `forced push: ignoring cached scale hashes`,
+   después la revisión y una línea `pushed` por balanza con la cantidad de registros y
+   la duración. No debe aparecer ninguna línea `skipped scale`. Si una balanza muestra
+   `FAILED`, esa balanza no recibió el catálogo: diagnosticarla con 11.1.
+
+4. Volver a arrancar el servicio y confirmar que quedó corriendo:
+
+   ```powershell
+   Start-Service BalanzaWebAgent
+   Get-Service BalanzaWebAgent
+   ```
+
+5. Imprimir una etiqueta de prueba y verificar la fecha. Si la balanza sigue con la
+   fecha vieja, revisar que su IP sea la correcta en **Sedes y balanzas**, detener el
+   servicio de nuevo y repetir el paso 2.
+
+> `probe --full` (sección 11.1) también manda el `hello`, así que corrige el reloj de
+> una sola balanza sin tocar el catálogo. `once --force` es el que garantiza que toda
+> la sede quede corregida.
+
+**La fecha de vencimiento es otro dato.** El catálogo no lleva una fecha de
+vencimiento: lleva los **días de validez** de cada artículo, y la balanza calcula
+vencimiento = su fecha + esos días. Hoy 829 de los 832 artículos tienen entre 364 y
+366 días, el valor por defecto del archivo del fabricante, así que la etiqueta muestra
+un vencimiento a un año aunque el reloj esté bien. Eso es dato maestro: se edita por
+artículo en la web y no es un defecto del agente.
 
 ## 12. Actualizar el agente a una versión nueva
 
@@ -612,7 +702,7 @@ Marcar en la PC de la sede, con la consola elevada abierta:
 
 ## 15. Para el administrador
 
-Todo esto se ejecuta en una máquina de desarrollo con Node 22 y `npm install` hecho,
+Todo esto se ejecuta en una máquina de desarrollo con Node 24 y `npm install` hecho,
 no en la sede.
 
 ```powershell
@@ -629,8 +719,8 @@ npm run agent:package
 `npm run agent:package` imprime al final:
 
 ```
-package: ...\apps\agent\dist\package\balanza-agent-1.0.1-win-x64
-zip:     ...\apps\agent\dist\balanza-agent-1.0.1-win-x64.zip
+package: ...\apps\agent\dist\package\balanza-agent-1.0.2-win-x64
+zip:     ...\apps\agent\dist\balanza-agent-1.0.2-win-x64.zip
 size:    N MB
 sha256:  <hash que se entrega con el zip>
 ```
