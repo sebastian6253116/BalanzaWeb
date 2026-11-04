@@ -589,3 +589,25 @@ test('retry entries for scales absent from the payload are pruned', async () => 
   assert.equal(config.state.scaleRetries[10].name, 'Caja 1');
   assert.deepEqual(result.retrying.map((item) => item.name), ['Caja 1']);
 });
+
+test('retry entries for scales excluded by targetScaleIds are pruned', async () => {
+  const config = makeConfig();
+  const clock = fakeClock();
+  config.state.scaleRetries = {
+    99: { name: 'Caja vieja', failures: 2, nextAttemptAt: new Date(clock()).toISOString(), lastError: 'down' },
+  };
+  const twoScales = [...scales, { id: 99, name: 'Caja vieja', host: '192.168.0.209', port: 5001 }];
+  const deployment = { ...payload(8), scales: twoScales, targetScaleIds: [10] };
+
+  const firstFetch = fakeFetch({ payload: deployment });
+  const first = await syncOnce({ config, fetchImpl: firstFetch, push: pushOk, persist: () => {}, now: clock });
+
+  assert.match(firstFetch.calls[0].url, /revision=0$/, 'the due retry fetches the current deployment');
+  assert.equal(config.state.scaleRetries[99], undefined, 'a scale excluded from the deployment is not retried');
+  assert.deepEqual(first.retrying, []);
+
+  const secondFetch = fakeFetch({ payload: deployment });
+  await syncOnce({ config, fetchImpl: secondFetch, push: pushOk, persist: () => {}, now: clock });
+
+  assert.match(secondFetch.calls[0].url, /revision=8$/, 'the dead entry must not force revision 0 on the next cycle');
+});

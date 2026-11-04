@@ -304,15 +304,25 @@ scales waiting: 0
 `revision: 0` y `scales known: 0` son normales en una sede recién creada, sin
 publicaciones todavía.
 
+La línea `scales waiting` y el backoff por balanza (reintentos a 60 s, 120 s,
+240 s… hasta 15 minutos) son comportamiento de la **1.0.3**. La última versión
+publicada es la **1.0.2**; la 1.0.3 ya está en el repositorio pero todavía no está
+empaquetada ni publicada. Una instalación 1.0.2 simplemente omite esa línea y
+reintenta cada balanza en cada ciclo, sin espera entre intentos.
+
 **5. Versión instalada:**
 
 ```powershell
 & "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" version
 ```
 
-Esperado: `balanza-agent 1.0.2`. Si alguna vez hay que soportar esa PC, este es el
-dato que hay que pedir: no hay otra forma de saber qué versión corre una vez
-instalada.
+Esperado: `balanza-agent` seguido de la versión del paquete que se instaló:
+`balanza-agent 1.0.2` si se instaló el zip 1.0.2. La última versión publicada es
+la **1.0.2**; la 1.0.3 ya está en el repositorio pero todavía no está empaquetada
+ni publicada. La versión que imprima el comando tiene que coincidir con el
+paquete que se instaló en esa PC, no con otra. Si alguna vez hay que soportar esa
+PC, este es el dato que hay que pedir: no hay otra forma de saber qué versión
+corre una vez instalada.
 
 **6. La PC llega a la API:**
 
@@ -464,11 +474,16 @@ una pista. El orden de descarte es:
    atienden una sola sesión y dejan de responder al saludo.
 5. Reiniciar la balanza (apagar y encender) para liberar una sesión colgada.
 
-No hace falta tocar la web: el agente reintenta esa balanza con backoff por balanza
-(60 s, después 120 s, 240 s… hasta un tope de 15 minutos) y, cuando vuelve a
-contestar, la revisión avanza sola. Para reintentar en el acto sin esperar, usar
-`once --force`. Las balanzas que ya estaban al día no reciben el catálogo de nuevo: se
-saltean por hash.
+No hace falta tocar la web: en la **1.0.3** el agente reintenta esa balanza con
+backoff por balanza (60 s, después 120 s, 240 s… hasta un tope de 15 minutos); la
+1.0.2 reintenta en cada ciclo, sin espera. Cuando la balanza vuelve a contestar, la
+revisión avanza sola.
+
+Para reintentar en el acto sin esperar, usar `once --force`. Un `once` normal
+saltea por hash las balanzas que ya estaban al día, pero `--force` ignora ese hash
+para **todas** las balanzas objetivo y reenvía el catálogo a todas. No ejecutar
+`once --force` con el servicio `BalanzaWebAgent` activo: hay que detenerlo primero
+(sección 11.2).
 
 **Diagnóstico completo con `--full`.** Sin `--full`, `probe` solo prueba el saludo:
 distingue una balanza que no está en la red de una que contesta. Con `--full` abre
@@ -511,7 +526,8 @@ reciba un `hello` nuevo.
 Un `once` normal no alcanza para corregirla. El agente saltea las balanzas cuyo
 contenido no cambió y, cuando la API responde 304, no envía nada: sin `hello`, el
 reloj no se actualiza. La forma de forzar el envío a todas las balanzas de la sede es
-`once --force`, que pide la revisión 0 e ignora el hash guardado por balanza.
+`once --force`, que pide la revisión 0 e ignora el hash guardado de todas las
+balanzas objetivo.
 
 Detenga primero el servicio: dos procesos no deben estar empujando a las mismas
 balanzas al mismo tiempo. Todo se ejecuta en PowerShell **elevado**.

@@ -73,9 +73,7 @@ export async function syncOnce({
   // A scale deleted or disabled in the web must not keep showing up in `status`.
   const payloadScales = Array.isArray(payload.scales) ? payload.scales : [];
   const knownScaleIds = new Set(payloadScales.map((scale) => String(scale.id)));
-  for (const scaleId of Object.keys(retriesByScale)) {
-    if (!knownScaleIds.has(scaleId)) delete retriesByScale[scaleId];
-  }
+  pruneRetries(retriesByScale, knownScaleIds);
 
   if (!payload.catalog?.articles?.length || !payloadScales.length) {
     log(`revision ${payload.revision ?? 0} has ${payload.catalog?.articles?.length ?? 0} articles and ${payloadScales.length} scales — nothing to push`);
@@ -101,6 +99,10 @@ export async function syncOnce({
   const indexTable = indexTableNumbers(payload.catalog.articles);
   const targetIds = payload.targetScaleIds;
   const targets = payloadScales.filter((scale) => !targetIds || targetIds.includes(scale.id));
+  // A scale excluded by the deployment stays in `payload.scales`, but it will
+  // never be pushed: its retry entry is dead weight, and because the entry is due
+  // it would force `revision=0` on every poll, refetching the whole deployment.
+  pruneRetries(retriesByScale, new Set(targets.map((scale) => String(scale.id))));
 
   const pushed = [];
   const skipped = [];
@@ -219,6 +221,13 @@ function shouldReportFailure(previous, failures, message) {
   if (failures === 1) return true;
   if (previous?.lastError !== message) return true;
   return failures % 10 === 0;
+}
+
+/** Drops retry entries for scales that will never be pushed. */
+function pruneRetries(retriesByScale, keepScaleIds) {
+  for (const scaleId of Object.keys(retriesByScale)) {
+    if (!keepScaleIds.has(scaleId)) delete retriesByScale[scaleId];
+  }
 }
 
 /** Retry entries that are still waiting, in the shape the CLI reports. */

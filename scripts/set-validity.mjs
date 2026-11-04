@@ -42,14 +42,27 @@ export function buildCatalogPayload(articles, days) {
 }
 
 /**
- * Stable snapshot of the catalogue identity: barcode plus price. Used to detect
- * concurrent edits between reading and replacing the whole catalogue.
+ * Stable snapshot of every field the script round-trips: name, lfCode,
+ * pluNumber, barcode, barcodeType, priceCents, unitCode, department,
+ * validityDays and packageType. Used to detect concurrent edits between reading
+ * and replacing the whole catalogue; a change in any of them aborts the PUT.
  */
 export function catalogueSignature(articles) {
   return JSON.stringify(
     articles
-      .map((article) => [article.barcode, article.priceCents])
-      .sort((a, b) => a[0] - b[0]),
+      .map((article) => ({
+        name: article.name,
+        lfCode: article.lfCode,
+        pluNumber: article.pluNumber ?? 0,
+        barcode: article.barcode,
+        barcodeType: article.barcodeType ?? 7,
+        priceCents: article.priceCents,
+        unitCode: article.unitCode,
+        department: article.department,
+        validityDays: article.validityDays,
+        packageType: article.packageType ?? 0,
+      }))
+      .sort((a, b) => a.barcode - b.barcode),
   );
 }
 
@@ -141,8 +154,8 @@ async function main() {
     return;
   }
 
-  // Sending the catalogue back with no difference would rewrite updated_at for
-  // nothing and could leave the sedes looking pending.
+  // A same-content PUT would delete and reinsert every row for nothing, churning
+  // `updated_at` across the whole catalogue.
   if (changed.length === 0) {
     console.log(`nothing to do: every article already has ${days} days`);
     return;

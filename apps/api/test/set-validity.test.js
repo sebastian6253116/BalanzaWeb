@@ -82,3 +82,14 @@ test('catalogueSignature changes when a price changes', () => {
 
   assert.notEqual(catalogueSignature(repriced), catalogueSignature(articles));
 });
+
+test('catalogueSignature changes when a name, a unit code or a validity changes', () => {
+  const base = catalogueSignature(articles);
+  const withName = articles.map((article, index) => (index === 0 ? { ...article, name: 'LOMO DE AGUJA PREMIUM' } : article));
+  const withUnit = articles.map((article, index) => (index === 0 ? { ...article, unitCode: 1 } : article));
+  const withValidity = articles.map((article, index) => (index === 0 ? { ...article, validityDays: 30 } : article));
+
+  assert.notEqual(catalogueSignature(withName), base);
+  assert.notEqual(catalogueSignature(withUnit), base);
+  assert.notEqual(catalogueSignature(withValidity), base);
+});
