@@ -2,11 +2,11 @@
 
 Documento de traspaso. Última actualización: **2026-11-04**.
 
-**Estado en una línea:** desplegado en producción con Dokploy, catálogo real de 832
-artículos cargado, agente 1.0.2 instalado y verificado en la sede (las etiquetas ya
-salen con la fecha correcta), agente 1.0.3 en el repositorio pendiente de empaquetar y
-publicar, y las tres balanzas de DR PORTILLO todavía rechazan `start` a la espera de la
-acción física.
+**Estado en una línea:** desplegado en producción con Dokploy, catálogo real de 835
+artículos cargado (todos con 365 días de validez), agente 1.0.2 instalado y verificado
+en la sede (las etiquetas ya salen con la fecha correcta), agente 1.0.3 publicado y
+pendiente de instalar, y las tres balanzas de DR PORTILLO todavía rechazan `start` a la
+espera de la acción física.
 
 Resumen en una línea: web React en VPS + microservicio local que habla el
 **protocolo nativo** de las balanzas Rongta RLS1000 por **UDP**, sin instalar
@@ -289,9 +289,9 @@ node --test packages/plu-format/test/plu-format.test.js `
 | Hecho | **Empaquetar el agente como servicio Windows y distribuirlo** (binario único, arranque automático, log a archivo, zip plano para la sede) | Implementado con Node SEA + WinSW; `npm run agent:package` genera `balanza-agent-<version>-win-x64.zip`; ver `docs/service.md` |
 | Hecho | **API lista para desplegar** (un solo proceso sirve API y web compilada, `/healthz`, headers de seguridad, rate limit de login, logs por request, archivos estáticos con fallback SPA, Dockerfile + compose + Caddy) | Implementado en `apps/api/src/app.js` e `apps/api/src/index.js`; artefactos en `deploy/` y guía en `docs/deploy.md` |
 | Hecho | **Despliegue en VPS + HTTPS** | Corriendo en Dokploy (Docker + Traefik + Let's Encrypt) desde `main`, con auto-deploy. Ver sección 15 |
-| Hecho | **Maestro de artículos en producción** | 832 artículos cargados con `PUT /api/articles` y persistidos en el volumen. 23 tienen precio 0 en el archivo original |
+| Hecho | **Maestro de artículos en producción** | 835 artículos cargados con `PUT /api/articles` y persistidos en el volumen. 23 tienen precio 0 en el archivo original y se dejan así a propósito. Todos quedaron con 365 días de validez (ver §10 y `scripts/set-validity.mjs`) |
 | Hecho | **Administración completa de sedes, balanzas y usuarios** | Alta, baja y edición; ver sección 15 |
-| Hecho | **Flujo completo con hardware**: sede + balanza + publicación + agente real | Agente 1.0.1 instalado y enrolado en dos sedes; publicaciones reales aplicadas en las balanzas que responden. La 1.0.2 se instaló en la sede y se verificó que la fecha de las etiquetas sale correcta; la 1.0.3 está en el repositorio, pendiente de empaquetar |
+| Hecho | **Flujo completo con hardware**: sede + balanza + publicación + agente real | Agente 1.0.1 instalado y enrolado en dos sedes; publicaciones reales aplicadas en las balanzas que responden. La 1.0.2 se instaló en la sede y se verificó que la fecha de las etiquetas sale correcta; la 1.0.3 está publicada y pendiente de instalar |
 | Alta | **Balanzas que rechazan `start` en DR PORTILLO** (`.200`, `.202`, `.203`; CHARCUTERIA `.201` responde bien) | Verificado el 2026-11-04 desde la red de la sede: las cuatro contestan `hello` y `goodbye`, pero las tres que fallan **ignoran todo frame `D2`** (`start`, `data`, `commit`, `end`) mientras la `.201` ACKea cualquier `D2`. No es red, ni modelo, ni el contenido del frame: las tres nunca entran en modo descarga. Se probaron variantes de `start` y un `goodbye` previo sin efecto. Falta la acción física: apagar/encender la balanza y, si sigue, revisar en el menú la IP de maestro y el modo de comunicación |
 | Hecho (decisión) | **23 artículos con precio 0**: se dejan en 0 | Decisión registrada: están en 0 a propósito y no se modifican. El precio se conserva tal cual al reimportar o ajustar el catálogo |
 | Hecho | **Días de validez del catálogo**: todos los artículos deben tener 365 días | Resuelto con `node scripts/set-validity.mjs --api <url> --user <user> --password <password>`; ver `docs/instalacion-sede.md` §11.3. Sigue siendo dato maestro editable por artículo en la web |
@@ -373,11 +373,16 @@ al hacer push. La guía de configuración está en `docs/deploy.md`.
 
 ### Base de datos de producción
 
-- 832 artículos cargados desde `BaseDatosBalanza/PLU BALANZA FARMAVID.Txp` con
-  `PUT /api/articles` (validación completa; 0 errores, 25 advertencias).
+- 832 artículos cargados inicialmente desde `BaseDatosBalanza/PLU BALANZA FARMAVID.Txp`
+  con `PUT /api/articles` (validación completa; 0 errores, 25 advertencias). Hoy el
+  catálogo tiene **835**: se agregaron tres después de la carga inicial.
 - **23 artículos tienen precio 0** en el archivo original (PAN CANILLA, INACTIVO,
-  ASADO DE TIRAS X KG…): revisar antes de publicar a una balanza.
-- Todavía **no hay sedes, balanzas ni agentes** creados en producción.
+  ASADO DE TIRAS X KG…): es intencional, se dejan en 0 y no se tocan.
+- Todos los artículos quedaron con **365 días de validez** con
+  `scripts/set-validity.mjs`; el procedimiento está en §11.3 de
+  `instalacion-sede.md`.
+- Hay **dos sedes enroladas** con el agente instalado; las balanzas que responden
+  reciben las publicaciones.
 - La instancia MySQL que provisionó Dokploy está **sin usar** (la app es SQLite).
   Borrarla libera ~460 MB de RAM.
 

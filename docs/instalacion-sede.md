@@ -72,21 +72,21 @@ administra el sistema. Cómo se genera y publica una versión nueva está en
 
 - Página de releases:
   <https://github.com/sebastian6253116/BalanzaWeb/releases>
-- Release de la versión 1.0.2:
-  <https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.2>
+- Release de la versión 1.0.3:
+  <https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.3>
 - Descarga directa del paquete:
-  <https://github.com/sebastian6253116/BalanzaWeb/releases/download/agent-v1.0.2/balanza-agent-1.0.2-win-x64.zip>
+  <https://github.com/sebastian6253116/BalanzaWeb/releases/download/agent-v1.0.3/balanza-agent-1.0.3-win-x64.zip>
 
-Para 1.0.2 el paquete es un único archivo de 40,87 MB:
+Para 1.0.3 el paquete es un único archivo de 40,87 MB:
 
 ```
-balanza-agent-1.0.2-win-x64.zip
+balanza-agent-1.0.3-win-x64.zip
 ```
 
 Su SHA-256 de referencia es:
 
 ```
-1c9f615e130cb30a528e8a7446388b0868993dedb59a900e4ef6e52ca8892465
+0680e9ff874b041f255c91b078898883b5445a1d0c1ad9c6529d8130490f13dc
 ```
 
 **Verificación de integridad.** El zip se entrega junto con su SHA-256, que es el
@@ -94,14 +94,14 @@ valor que imprime `npm run agent:package` al generarlo (línea `sha256: ...`). E
 PC de la sede, en la carpeta donde está el zip:
 
 ```powershell
-Get-FileHash .\balanza-agent-1.0.2-win-x64.zip -Algorithm SHA256
+Get-FileHash .\balanza-agent-1.0.3-win-x64.zip -Algorithm SHA256
 ```
 
 El campo `Hash` tiene que coincidir con el valor de referencia. El valor hexadecimal
 es el mismo en mayúsculas o minúsculas. Si no coincide, el archivo llegó incompleto o
 fue alterado: no lo instale y pida el paquete de nuevo.
 
-> El hash de arriba es el del zip 1.0.2 publicado. Si se regenera el zip, aunque la
+> El hash de arriba es el del zip 1.0.3 publicado. Si se regenera el zip, aunque la
 > versión sea la misma, el hash cambia: hay que usar el que imprimió
 > `npm run agent:package` y quedó anotado en la release.
 
@@ -117,13 +117,13 @@ fue alterado: no lo instale y pida el paquete de nuevo.
 - Si el zip descargado quedó bloqueado y el script no arranca, desbloquéelo:
 
   ```powershell
-  Unblock-File .\balanza-agent-1.0.2-win-x64.zip
+  Unblock-File .\balanza-agent-1.0.3-win-x64.zip
   ```
 
 ## 5. Paso 2 — instalar el servicio
 
 1. Descomprima el zip en una carpeta local, por ejemplo `C:\Instaladores\`. Windows
-   crea la carpeta `balanza-agent-1.0.2-win-x64` con todo el contenido plano:
+   crea la carpeta `balanza-agent-1.0.3-win-x64` con todo el contenido plano:
 
    ```
    balanza-agent.exe
@@ -145,7 +145,7 @@ fue alterado: no lo instale y pida el paquete de nuevo.
 3. Ubíquese en la carpeta extraída (ajuste la ruta a la suya):
 
    ```powershell
-   Set-Location "C:\Instaladores\balanza-agent-1.0.2-win-x64"
+   Set-Location "C:\Instaladores\balanza-agent-1.0.3-win-x64"
    ```
 
 4. Confirme que están los archivos antes de ejecutar:
@@ -305,10 +305,9 @@ scales waiting: 0
 publicaciones todavía.
 
 La línea `scales waiting` y el backoff por balanza (reintentos a 60 s, 120 s,
-240 s… hasta 15 minutos) son comportamiento de la **1.0.3**. La última versión
-publicada es la **1.0.2**; la 1.0.3 ya está en el repositorio pero todavía no está
-empaquetada ni publicada. Una instalación 1.0.2 simplemente omite esa línea y
-reintenta cada balanza en cada ciclo, sin espera entre intentos.
+240 s… hasta 15 minutos) son comportamiento de la **1.0.3**, que es la última
+versión publicada. Una instalación 1.0.2 simplemente omite esa línea y reintenta
+cada balanza en cada ciclo, sin espera entre intentos.
 
 **5. Versión instalada:**
 
@@ -317,12 +316,12 @@ reintenta cada balanza en cada ciclo, sin espera entre intentos.
 ```
 
 Esperado: `balanza-agent` seguido de la versión del paquete que se instaló:
-`balanza-agent 1.0.2` si se instaló el zip 1.0.2. La última versión publicada es
-la **1.0.2**; la 1.0.3 ya está en el repositorio pero todavía no está empaquetada
-ni publicada. La versión que imprima el comando tiene que coincidir con el
-paquete que se instaló en esa PC, no con otra. Si alguna vez hay que soportar esa
-PC, este es el dato que hay que pedir: no hay otra forma de saber qué versión
-corre una vez instalada.
+`balanza-agent 1.0.3` si se instaló el zip 1.0.3, `balanza-agent 1.0.2` si se
+instaló el 1.0.2. La última versión publicada es la **1.0.3**; la 1.0.2 sigue
+disponible por si hay que reinstalar. La versión que imprima el comando tiene que
+coincidir con el paquete que se instaló en esa PC, no con otra. Si alguna vez hay
+que soportar esa PC, este es el dato que hay que pedir: no hay otra forma de saber
+qué versión corre una vez instalada.
 
 **6. La PC llega a la API:**
 
@@ -788,8 +787,8 @@ npm run agent:package
 `npm run agent:package` imprime al final:
 
 ```
-package: ...\apps\agent\dist\package\balanza-agent-1.0.2-win-x64
-zip:     ...\apps\agent\dist\balanza-agent-1.0.2-win-x64.zip
+package: ...\apps\agent\dist\package\balanza-agent-1.0.3-win-x64
+zip:     ...\apps\agent\dist\balanza-agent-1.0.3-win-x64.zip
 size:    N MB
 sha256:  <hash que se entrega con el zip>
 ```
