@@ -1,11 +1,12 @@
 # BalanzaWeb — estado del proyecto
 
-Documento de traspaso. Última actualización: **2026-11-02**.
+Documento de traspaso. Última actualización: **2026-11-04**.
 
 **Estado en una línea:** desplegado en producción con Dokploy, catálogo real de 832
-artículos cargado, agente 1.0.1 instalado en dos sedes con publicaciones reales sobre
-las balanzas que responden, y pendientes la instalación de la 1.0.2 (que corrige la
-fecha de las etiquetas) y las tres balanzas de DR PORTILLO que rechazan `start`.
+artículos cargado, agente 1.0.2 instalado y verificado en la sede (las etiquetas ya
+salen con la fecha correcta), agente 1.0.3 en el repositorio pendiente de empaquetar y
+publicar, y las tres balanzas de DR PORTILLO todavía rechazan `start` a la espera de la
+acción física.
 
 Resumen en una línea: web React en VPS + microservicio local que habla el
 **protocolo nativo** de las balanzas Rongta RLS1000 por **UDP**, sin instalar
@@ -161,7 +162,8 @@ POST /agent/report
 - Al recibir una revisión: arma los registros **localmente**, calcula el hash y
   **solo envía a las balanzas cuyo contenido cambió**.
 - La revisión local **solo avanza si todas las balanzas ACKearon**; si una falla,
-  se reintenta en el próximo ciclo sin reenviar a las que ya estaban bien.
+  se reintenta con backoff exponencial por balanza (60 s, duplicando hasta 15 min)
+  sin reenviar a las que ya estaban bien.
 - El intervalo remoto (desde la web) aplica salvo que exista override local.
 - En producción corre como servicio Windows `BalanzaWebAgent`: binario único
   (Node SEA) + WinSW, datos en `%ProgramData%\BalanzaWeb\Agent`, log rotativo y
@@ -229,11 +231,12 @@ node --test packages/plu-format/test/plu-format.test.js `
                packages/xlsx/test/xlsx.test.js `
                apps/api/test/api.test.js apps/api/test/server.test.js `
                apps/api/test/users-sedes.test.js `
+               apps/api/test/set-validity.test.js `
                apps/agent/test/agent.test.js apps/agent/test/service.test.js `
                apps/web/test/barcode.test.js
 ```
 
-**108 tests, todos verdes.** Incluyen:
+**124 tests, todos verdes.** Incluyen:
 
 - Golden byte-a-byte de los **832 registros** y de **todas las tramas de control**
   contra las capturas reales (fixture inmutable `test/fixtures/plu-832-original.txp`).
@@ -275,7 +278,7 @@ node --test packages/plu-format/test/plu-format.test.js `
    autofirmado no es de confianza en otras PC y agrava la operación. La decisión de
    comprar un certificado real queda pendiente.
 10. **La versión del agente es independiente de la web y del API**: la fuente es
-    `apps/agent/package.json` (hoy `1.0.2`) y el tag de release es
+    `apps/agent/package.json` (hoy `1.0.3`) y el tag de release es
     `agent-v<version>`. La web y el API pueden avanzar sin volver a publicar el
     agente, y viceversa.
 
@@ -288,16 +291,16 @@ node --test packages/plu-format/test/plu-format.test.js `
 | Hecho | **Despliegue en VPS + HTTPS** | Corriendo en Dokploy (Docker + Traefik + Let's Encrypt) desde `main`, con auto-deploy. Ver sección 15 |
 | Hecho | **Maestro de artículos en producción** | 832 artículos cargados con `PUT /api/articles` y persistidos en el volumen. 23 tienen precio 0 en el archivo original |
 | Hecho | **Administración completa de sedes, balanzas y usuarios** | Alta, baja y edición; ver sección 15 |
-| Hecho | **Flujo completo con hardware**: sede + balanza + publicación + agente real | Agente 1.0.1 instalado y enrolado en dos sedes; publicaciones reales aplicadas en las balanzas que responden. La 1.0.2 está publicada y pendiente de instalar |
-| Alta | **Balanzas que rechazan `start` en DR PORTILLO** (`.200`, `.202`, `.203`; CHARCUTERIA `.201` responde bien) | Contesta `hello` pero no abre la sesión de descarga. ARP y ping limpios, sin IP duplicada. Falta apagar/encender una balanza, revisar la IP de maestro configurada contra la de la PC (`ipconfig`) y cerrar software del fabricante abierto |
-| Alta | Revisar los **23 artículos con precio 0** antes de publicar | Pueden llegar a la balanza con precio cero |
-| Media | **Días de validez del catálogo**: 829 de 832 artículos tienen 364–366 días, el valor por defecto del archivo del fabricante | La balanza calcula vencimiento = su fecha + días de validez, así que la etiqueta muestra un vencimiento a un año aunque el reloj esté bien. Es dato maestro, se corrige por artículo en la web |
+| Hecho | **Flujo completo con hardware**: sede + balanza + publicación + agente real | Agente 1.0.1 instalado y enrolado en dos sedes; publicaciones reales aplicadas en las balanzas que responden. La 1.0.2 se instaló en la sede y se verificó que la fecha de las etiquetas sale correcta; la 1.0.3 está en el repositorio, pendiente de empaquetar |
+| Alta | **Balanzas que rechazan `start` en DR PORTILLO** (`.200`, `.202`, `.203`; CHARCUTERIA `.201` responde bien) | Verificado el 2026-11-04 desde la red de la sede: las cuatro contestan `hello` y `goodbye`, pero las tres que fallan **ignoran todo frame `D2`** (`start`, `data`, `commit`, `end`) mientras la `.201` ACKea cualquier `D2`. No es red, ni modelo, ni el contenido del frame: las tres nunca entran en modo descarga. Se probaron variantes de `start` y un `goodbye` previo sin efecto. Falta la acción física: apagar/encender la balanza y, si sigue, revisar en el menú la IP de maestro y el modo de comunicación |
+| Hecho (decisión) | **23 artículos con precio 0**: se dejan en 0 | Decisión registrada: están en 0 a propósito y no se modifican. El precio se conserva tal cual al reimportar o ajustar el catálogo |
+| Hecho | **Días de validez del catálogo**: todos los artículos deben tener 365 días | Resuelto con `node scripts/set-validity.mjs --api <url> --user <user> --password <password>`; ver `docs/instalacion-sede.md` §11.3. Sigue siendo dato maestro editable por artículo en la web |
 | Media | **MySQL** | SQLite alcanza para una sede; varias sedes simultáneas necesitan servidor. La API es síncrona, migrar exige volver async los handlers |
 | Media | **Decidir la firma del `.exe` del agente** | Sin firma, SmartScreen puede advertir en la sede; un certificado autofirmado no lo resuelve |
 | Hecho | **`probe --full`**: extender el diagnóstico a `hello` → `start` → `goodbye` | Implementado en 1.0.2: imprime cada paso con su latencia y distingue la alcanzabilidad de la aceptación de la sesión, con una pista propia cuando la balanza contesta `hello` y rechaza `start` |
 | Hecho | **Fecha de etiqueta corregida**: el `hello` mandaba día, mes y año; el orden correcto es año, mes y día | Corregido en 1.0.2. El 2026-11-02 un push hacía que la balanza imprimiera `26/11/2002`. `once --force` aplica la fecha correcta a toda la sede |
 | Media | **Cerrar las incógnitas abiertas del protocolo** (sección 11): `D204`, bytes `[93..123]`, obligatoriedad de `D207` y las **10 unidades sin confirmar** | Son datos inferidos; requieren capturas o pruebas en hardware |
-| Media | **Backoff o estado "sin conexión"** para el reintento de una balanza caída | Hoy reintenta cada 60 s sin espaciar y llena el historial de fallos idénticos |
+| Hecho | **Backoff por balanza** para el reintento de una balanza caída | Implementado en 1.0.3: 60 s de base, duplica en cada fallo y tope de 15 min; el estado se guarda en la config del agente y sobrevive un reinicio. El reporte solo se envía en el primer fallo, cuando cambia el error y cada 10 intentos, así que el historial deja de llenarse de filas idénticas |
 | Baja | Aislar cuál de los tres defectos del catálogo original disparaba el aborto | Se puede hacer con el CLI, sin GUI |
 | Baja | Actualizar el texto de `Sedes.jsx` que todavía muestra `balanza-agent enroll ...` | La instalación ya usa la ventana de conexión; el texto quedó viejo |
 | Baja | Reutilizar `.table-cards` en las demás tablas | Sólo la tabla de usuarios se vuelve tarjetas; el resto sigue con scroll horizontal en móvil |

@@ -30,5 +30,5 @@ export function saveConfig(config, path = defaultConfigPath()) {
 }
 
 export function emptyState() {
-  return { revision: 0, scaleHashes: {}, lastSyncAt: null };
+  return { revision: 0, scaleHashes: {}, scaleRetries: {}, lastSyncAt: null };
 }

@@ -251,6 +251,18 @@ async function status(flags) {
   console.log(`last sync:     ${config.state?.lastSyncAt ?? 'never'}`);
   const hashes = Object.entries(config.state?.scaleHashes ?? {});
   console.log(`scales known:  ${hashes.length}`);
+  const waiting = Object.entries(config.state?.scaleRetries ?? {});
+  console.log(`scales waiting: ${waiting.length}`);
+  for (const [scaleId, retry] of waiting) {
+    console.log(`  ${retry.name ?? `scale ${scaleId}`}: attempt ${retry.failures}, next ${retry.nextAttemptAt}`);
+  }
+}
+
+function printWaiting(items = []) {
+  for (const item of items) {
+    const seconds = Math.max(1, Math.ceil((Date.parse(item.nextAttemptAt) - Date.now()) / 1000));
+    console.log(`  waiting  ${item.name}: retry in ${seconds}s (attempt ${item.failures}) — ${item.lastError}`);
+  }
 }
 
 async function main() {
@@ -271,12 +283,14 @@ async function main() {
         const result = await once(flags);
         if (result.changed === false) {
           console.log(`no changes — revision ${result.revision}, nothing sent`);
+          printWaiting(result.retrying);
         } else {
           console.log(`revision ${result.revision}`);
           for (const item of result.pushed) {
             console.log(`  pushed  ${item.name}: ${item.result.records} records in ${item.result.durationMs} ms`);
           }
           for (const id of result.skipped) console.log(`  skipped scale ${id} (unchanged)`);
+          printWaiting(result.retrying);
           if (result.failed) console.log('  some scales failed — revision not advanced, will retry');
         }
         break;

@@ -298,6 +298,7 @@ poll interval: 60s
 revision:      0
 last sync:     2026-10-27T15:40:12.000Z
 scales known:  0
+scales waiting: 0
 ```
 
 `revision: 0` y `scales known: 0` son normales en una sede recién creada, sin
@@ -463,9 +464,11 @@ una pista. El orden de descarte es:
    atienden una sola sesión y dejan de responder al saludo.
 5. Reiniciar la balanza (apagar y encender) para liberar una sesión colgada.
 
-No hace falta tocar la web: el agente reintenta en cada ciclo y, cuando la balanza
-vuelve a contestar, la revisión avanza sola. Las balanzas que ya estaban al día no
-reciben el catálogo de nuevo: se saltean por hash.
+No hace falta tocar la web: el agente reintenta esa balanza con backoff por balanza
+(60 s, después 120 s, 240 s… hasta un tope de 15 minutos) y, cuando vuelve a
+contestar, la revisión avanza sola. Para reintentar en el acto sin esperar, usar
+`once --force`. Las balanzas que ya estaban al día no reciben el catálogo de nuevo: se
+saltean por hash.
 
 **Diagnóstico completo con `--full`.** Sin `--full`, `probe` solo prueba el saludo:
 distingue una balanza que no está en la red de una que contesta. Con `--full` abre
@@ -550,10 +553,60 @@ balanzas al mismo tiempo. Todo se ejecuta en PowerShell **elevado**.
 
 **La fecha de vencimiento es otro dato.** El catálogo no lleva una fecha de
 vencimiento: lleva los **días de validez** de cada artículo, y la balanza calcula
-vencimiento = su fecha + esos días. Hoy 829 de los 832 artículos tienen entre 364 y
-366 días, el valor por defecto del archivo del fabricante, así que la etiqueta muestra
-un vencimiento a un año aunque el reloj esté bien. Eso es dato maestro: se edita por
-artículo en la web y no es un defecto del agente.
+vencimiento = su fecha + esos días. Todos los artículos deben tener **365 días**. Un
+maestro importado del fabricante suele traer 364–366, y entonces la etiqueta muestra
+un vencimiento a un año aunque el reloj esté bien. Eso es dato maestro: se corrige en
+la web artículo por artículo o de una vez con el script de 11.3, y no es un defecto
+del agente.
+
+### 11.3 Llevar los días de validez de todo el catálogo a 365
+
+El maestro del fabricante trae 364–366 días en casi todos los artículos. Después de
+importar un maestro así, hay que dejarlos todos en 365. El script lee el catálogo,
+cambia **solo** `validityDays` y vuelve a enviarlo completo; el resto de los campos
+—precios incluidos— queda igual, también los artículos que tienen precio 0 a
+propósito.
+
+Se ejecuta desde una máquina con Node 22 o superior y acceso al API, no desde la PC
+de la sede. El usuario tiene que tener los permisos `articles.read` (para leer el
+catálogo) y `articles.write` (para reemplazarlo), por ejemplo un administrador.
+
+1. Definir la clave en la sesión de PowerShell. Así no queda en el historial:
+
+   ```powershell
+   $env:BALANZA_PASSWORD = "..."
+   ```
+
+   También se acepta `--password "..."` por compatibilidad, pero queda visible en la
+   lista de procesos y en el historial del shell; conviene `$env:BALANZA_PASSWORD`.
+
+2. Probar primero en seco. No envía nada: muestra cuántos artículos cambiarían y
+   algunos ejemplos con su valor actual.
+
+   ```powershell
+   node scripts/set-validity.mjs --api https://balanza.farmavid.com.ve --user admin --dry-run
+   ```
+
+3. Aplicar el cambio quitando `--dry-run`:
+
+   ```powershell
+   node scripts/set-validity.mjs --api https://balanza.farmavid.com.ve --user admin
+   ```
+
+   Al terminar imprime los artículos leídos, los que ya estaban en 365, los que
+   cambiaron y el estado HTTP. Si el API rechaza el catálogo, imprime el mensaje de
+   error y termina con código distinto de cero.
+
+4. Publicar el catálogo a la sede desde la web para que las balanzas reciban los días
+   nuevos. El script solo cambia el dato maestro: no publica ni empuja a las balanzas.
+
+Antes de enviar, el script vuelve a leer el catálogo y compara la firma (cantidad de
+artículos, códigos de barra y precios) con la del inicio. Si alguien lo modificó
+mientras corría, aborta sin enviar nada y hay que ejecutarlo de nuevo.
+
+El destino se puede cambiar con `--days <n>`; el valor por defecto es 365 y solo se
+aceptan enteros positivos. Cada pedido tiene un tiempo de espera de 30 s, ajustable
+con `--timeout <ms>`.
 
 ## 12. Actualizar el agente a una versión nueva
 

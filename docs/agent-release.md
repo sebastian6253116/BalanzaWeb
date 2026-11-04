@@ -5,8 +5,17 @@ agente a una sede. Cubre el build, el empaquetado, la verificación y la publica
 del artefacto. El procedimiento del lado de la sede está en
 [`instalacion-sede.md`](instalacion-sede.md).
 
-**Estado:** la versión 1.0.2 está publicada en
+**Estado:** la versión 1.0.3 está en el repositorio, pendiente de empaquetar y
+publicar. La última versión publicada es la 1.0.2:
 <https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.2>.
+
+**Novedad 1.0.3 — backoff por balanza.** Una balanza que falla ya no se reintenta en
+cada ciclo: espera 60 s, después 120 s, 240 s y así hasta un tope de 15 minutos. El
+estado queda en la configuración del agente, así que sobrevive un reinicio del
+servicio. El reporte de fallos solo se envía en el primer fallo de la racha, cuando
+cambia el mensaje de error y cada 10 intentos: el historial deja de llenarse con filas
+idénticas y una balanza muerta se distingue de un fallo transitorio. `once --force`
+sigue ignorando la espera y es la acción de recuperación documentada.
 
 ## 1. Por qué el binario no está en git
 
@@ -21,7 +30,7 @@ mismo qué versión es.
 
 ## 2. Antes de empaquetar
 
-1. Ejecutar los tests y confirmar que pasan los 108:
+1. Ejecutar los tests y confirmar que pasan los 124:
 
    ```powershell
    npm test
@@ -229,7 +238,7 @@ sigue pendiente.
 
 ## 8. Checklist de publicación
 
-- [ ] `npm test` pasa completo (108 tests).
+- [ ] `npm test` pasa completo (124 tests).
 - [ ] `version` está subida en `apps/agent/package.json`.
 - [ ] `npm run agent:smoke` terminó con `RESULT: ALL CHECKS PASSED` en consola elevada.
 - [ ] `npm run agent:build` y `npm run agent:package` generaron el zip.

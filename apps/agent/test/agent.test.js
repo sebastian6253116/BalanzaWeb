@@ -337,3 +337,255 @@ test('version prints the package version and the usage line lists it', () => {
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+// ---- per-scale retry backoff ------------------------------------------------
+
+function fakeClock(startIso = '2026-11-04T10:00:00.000Z') {
+  let current = Date.parse(startIso);
+  const now = () => current;
+  now.advance = (seconds) => {
+    current += seconds * 1000;
+  };
+  now.set = (ms) => {
+    current = ms;
+  };
+  return now;
+}
+
+const reportCalls = (fetchImpl) => fetchImpl.calls.filter((call) => call.url.endsWith('/agent/report'));
+
+const failingPush = (message = 'hello: no acknowledgement after 3 attempt(s)') => async () => {
+  throw new Error(message);
+};
+
+test('a scale in backoff is not pushed again before nextAttemptAt', async () => {
+  const config = makeConfig();
+  const clock = fakeClock();
+  let pushes = 0;
+  const push = async () => {
+    pushes++;
+    throw new Error('hello: no acknowledgement after 3 attempt(s)');
+  };
+
+  const firstFetch = fakeFetch({ payload: payload(3) });
+  const first = await syncOnce({ config, fetchImpl: firstFetch, push, persist: () => {}, now: clock });
+
+  assert.equal(pushes, 1);
+  assert.equal(first.failed, true);
+  assert.deepEqual(first.retrying, [], 'the first failure is pushed, not skipped');
+  assert.equal(reportCalls(firstFetch).length, 1);
+  assert.equal(config.state.scaleRetries[10].failures, 1);
+
+  clock.advance(30);
+  const secondFetch = fakeFetch({ payload: payload(3) });
+  const second = await syncOnce({ config, fetchImpl: secondFetch, push, persist: () => {}, now: clock });
+
+  assert.equal(pushes, 1, 'the scale must not be pushed before nextAttemptAt');
+  assert.equal(reportCalls(secondFetch).length, 0, 'no duplicate failure report while waiting');
+  assert.equal(second.failed, true);
+  assert.equal(second.retrying.length, 1);
+  assert.equal(second.retrying[0].scaleId, 10);
+  assert.equal(second.retrying[0].name, 'Caja 1');
+  assert.equal(config.state.revision, 0, 'revision must not advance while a scale waits');
+});
+
+test('backoff delay doubles from 60 s and is capped at 15 minutes', async () => {
+  const config = makeConfig();
+  const clock = fakeClock();
+  const expectedSeconds = [60, 120, 240, 480, 900, 900];
+
+  for (let index = 0; index < expectedSeconds.length; index++) {
+    const cycleStart = clock();
+    const result = await syncOnce({
+      config,
+      fetchImpl: fakeFetch({ payload: payload(3) }),
+      push: failingPush(),
+      persist: () => {},
+      now: clock,
+    });
+
+    assert.equal(result.failed, true);
+    const entry = config.state.scaleRetries[10];
+    assert.equal(entry.failures, index + 1);
+    assert.equal(Date.parse(entry.nextAttemptAt) - cycleStart, expectedSeconds[index] * 1000);
+    clock.set(Date.parse(entry.nextAttemptAt));
+  }
+});
+
+test('a successful push clears the retry entry', async () => {
+  const config = makeConfig();
+  const clock = fakeClock();
+
+  await syncOnce({ config, fetchImpl: fakeFetch({ payload: payload(3) }), push: failingPush(), persist: () => {}, now: clock });
+  assert.ok(config.state.scaleRetries[10], 'the failure must be recorded');
+
+  clock.advance(60);
+  const result = await syncOnce({ config, fetchImpl: fakeFetch({ payload: payload(3) }), push: pushOk, persist: () => {}, now: clock });
+
+  assert.equal(result.failed, false);
+  assert.equal(result.pushed.length, 1);
+  assert.equal(config.state.scaleRetries[10], undefined);
+  assert.equal(config.state.revision, 3, 'the revision advances once the scale succeeds');
+});
+
+test('force bypasses the backoff and clears it on success', async () => {
+  const config = makeConfig();
+  const clock = fakeClock();
+
+  await syncOnce({ config, fetchImpl: fakeFetch({ payload: payload(3) }), push: failingPush(), persist: () => {}, now: clock });
+  let pushes = 0;
+
+  const result = await syncOnce({
+    config,
+    fetchImpl: fakeFetch({ payload: payload(3) }),
+    push: async ({ records }) => {
+      pushes++;
+      return { records: records.length, framesSent: 9, durationMs: 3 };
+    },
+    persist: () => {},
+    now: clock,
+    force: true,
+  });
+
+  assert.equal(pushes, 1, 'a forced push ignores the waiting period');
+  assert.equal(result.pushed.length, 1);
+  assert.equal(config.state.scaleRetries[10], undefined);
+});
+
+test('a changed error message is reported again with the retry schedule', async () => {
+  const config = makeConfig();
+  const clock = fakeClock();
+
+  await syncOnce({ config, fetchImpl: fakeFetch({ payload: payload(3) }), push: failingPush('hello: no acknowledgement'), persist: () => {}, now: clock });
+  clock.advance(60);
+
+  const secondFetch = fakeFetch({ payload: payload(3) });
+  await syncOnce({ config, fetchImpl: secondFetch, push: failingPush('start: no acknowledgement'), persist: () => {}, now: clock });
+
+  const reports = reportCalls(secondFetch);
+  assert.equal(reports.length, 1, 'a different error must reach the API');
+  assert.match(JSON.parse(reports[0].body).error, /start: no acknowledgement \(retry in 120s, attempt 2\)/);
+});
+
+test('a long failure streak reports again on the tenth attempt', async () => {
+  const config = makeConfig();
+  const clock = fakeClock();
+  let reports = 0;
+
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    const fetchImpl = fakeFetch({ payload: payload(3) });
+    await syncOnce({ config, fetchImpl, push: failingPush(), persist: () => {}, now: clock });
+    reports += reportCalls(fetchImpl).length;
+    clock.set(Date.parse(config.state.scaleRetries[10].nextAttemptAt));
+  }
+
+  assert.equal(config.state.scaleRetries[10].failures, 10);
+  assert.equal(reports, 2, 'only the first and the tenth attempt reach the API');
+});
+
+test('a cached-hash skip clears a stale retry entry', async () => {
+  const config = makeConfig();
+  const records = articles.map((a) => buildRecord(a));
+  config.state.scaleHashes[10] = hashRecords(records);
+  config.state.scaleRetries = {
+    10: { name: 'Caja 1', failures: 2, nextAttemptAt: new Date(Date.now() + 600000).toISOString(), lastError: 'down' },
+  };
+
+  const result = await syncOnce({
+    config,
+    fetchImpl: fakeFetch({ payload: payload(2) }),
+    push: failingPush('must not push'),
+    persist: () => {},
+  });
+
+  assert.deepEqual(result.skipped, [10]);
+  assert.equal(config.state.scaleRetries[10], undefined);
+});
+
+test('a failed report does not turn a delivered catalogue into a failure', async () => {
+  const config = makeConfig();
+  const clock = fakeClock();
+  const expectedHash = hashRecords(articles.map((a) => buildRecord(a)));
+  const logs = [];
+  const fetchImpl = async (url) => {
+    if (url.endsWith('/agent/report')) {
+      return new Response(JSON.stringify({ error: 'boom' }), { status: 500 });
+    }
+    return new Response(JSON.stringify(payload(3)), { status: 200 });
+  };
+
+  const result = await syncOnce({
+    config,
+    fetchImpl,
+    push: pushOk,
+    log: (message) => logs.push(message),
+    persist: () => {},
+    now: clock,
+  });
+
+  assert.equal(result.pushed.length, 1, 'the scale must count as pushed');
+  assert.equal(result.failed, false, 'a report failure is not a scale failure');
+  assert.equal(config.state.revision, 3, 'the revision advances after a delivery');
+  assert.equal(config.state.scaleHashes[10], expectedHash);
+  assert.equal(config.state.scaleRetries[10], undefined, 'no retry entry is created');
+  assert.ok(
+    logs.some((line) => /catalogue delivered but the report failed/.test(line)),
+    'the report failure must be logged',
+  );
+});
+
+test('a due retry is fetched as revision 0 even when the API would answer 304', async () => {
+  const config = makeConfig();
+  const clock = fakeClock();
+  config.state.revision = 8;
+  config.state.scaleRetries = {
+    10: { name: 'Caja 1', failures: 1, nextAttemptAt: new Date(clock()).toISOString(), lastError: 'down' },
+  };
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    if (url.endsWith('/agent/report')) return new Response(JSON.stringify({ recorded: true }), { status: 201 });
+    if (/revision=0$/.test(url)) return new Response(JSON.stringify(payload(8)), { status: 200 });
+    return new Response(null, { status: 304 });
+  };
+  let pushes = 0;
+
+  const result = await syncOnce({
+    config,
+    fetchImpl,
+    push: async () => {
+      pushes++;
+      return { records: 2, framesSent: 9, durationMs: 4 };
+    },
+    persist: () => {},
+    now: clock,
+  });
+
+  assert.match(urls[0], /revision=0$/, 'a due retry must ask for the current deployment');
+  assert.ok(urls.some((url) => url.endsWith('/agent/report')), 'the retry must report its result');
+  assert.equal(pushes, 1, 'the scale must be pushed again');
+  assert.equal(result.failed, false);
+  assert.equal(result.revision, 8);
+});
+
+test('retry entries for scales absent from the payload are pruned', async () => {
+  const config = makeConfig();
+  const clock = fakeClock();
+  const nextAttemptAt = new Date(clock() + 600000).toISOString();
+  config.state.scaleRetries = {
+    10: { name: 'Caja 1', failures: 1, nextAttemptAt, lastError: 'down' },
+    99: { name: 'Caja vieja', failures: 2, nextAttemptAt, lastError: 'gone' },
+  };
+
+  const result = await syncOnce({
+    config,
+    fetchImpl: fakeFetch({ payload: payload(2) }),
+    push: pushOk,
+    persist: () => {},
+    now: clock,
+  });
+
+  assert.equal(config.state.scaleRetries[99], undefined, 'a scale no longer deployed is forgotten');
+  assert.equal(config.state.scaleRetries[10].name, 'Caja 1');
+  assert.deepEqual(result.retrying.map((item) => item.name), ['Caja 1']);
+});
