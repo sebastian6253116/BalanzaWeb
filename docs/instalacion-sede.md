@@ -455,10 +455,13 @@ sección).
 **Si contesta el saludo**, el equipo y la red están bien:
 
 ```
-hello reply from 192.168.0.203:5001 in 34 ms
-model: RONGTA_PV2.0
-reply: 263 bytes
+hello reply from 192.168.0.203:5001 in 18 ms
+model: not reported by the scale
+reply: 1 bytes
 ```
+
+El ACK del saludo es de **1 byte** y estas balanzas no devuelven la cadena de modelo:
+`model: not reported by the scale` es el resultado normal, no un error.
 
 **Si no contesta**, imprime `error: hello: no acknowledgement after N attempt(s)` y
 una pista. El orden de descarte es:
@@ -490,14 +493,14 @@ además una sesión de transferencia completa, `hello` → `start` → `goodbye`
 cada paso con su latencia:
 
 ```powershell
-& "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" probe --host 192.168.0.203 --full
+& "C:\Program Files\BalanzaWeb\Agent\balanza-agent.exe" probe --host 192.168.0.201 --full
 ```
 
 ```
-  hello: 34 ms
-  start: 12 ms
-  goodbye: 8 ms
-session opened on 192.168.0.203:5001 in 61 ms
+  hello: 22 ms
+  start: 11 ms
+  goodbye: 7 ms
+session opened on 192.168.0.201:5001 in 41 ms
 ```
 
 Eso separa dos fallas que el saludo solo no distingue:
@@ -507,9 +510,14 @@ Eso separa dos fallas que el saludo solo no distingue:
 - **`hello` responde y falla en `start`** con `start: no acknowledgement after N
   attempt(s)` y la pista `the scale answered hello but refused to start a transfer
   session. Close any vendor software holding the session and power-cycle the scale.`
-  El equipo y la red están bien, pero la balanza no abre la sesión de descarga: hay
-  software del fabricante con la sesión tomada o una sesión colgada. Cerrar ese
-  software y apagar/encender la balanza.
+  El equipo y la red están bien, pero la balanza no abre la sesión de descarga. Hay dos
+  causas posibles, en este orden:
+  1. Software del fabricante con la sesión tomada o una sesión colgada: cerrar ese
+     software y apagar/encender la balanza.
+  2. Configuración de la balanza: si el power-cycle no lo resuelve, revisar en el menú
+     de comunicación la **IP de maestro/servidor** (debe ser la IPv4 de la PC de la
+     sede, `ipconfig`) y el **modo de descarga**. Comparar el menú de la balanza que
+     falla con el de una que funcione en la misma sede: es la comparación más rápida.
 
 El `hello` lleva la fecha y la hora de la PC, y la balanza las adopta como propias. Por
 eso `probe --full` también corrige el reloj de esa balanza: no manda el catálogo ni

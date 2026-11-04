@@ -20,7 +20,9 @@ function fakeRow(overrides = {}) {
   };
 }
 
-async function startFakeScale({ dropFrameIndex = -1, silent = false } = {}) {
+async function startFakeScale({ dropFrameIndex = -1, silent = false, helloReply } = {}) {
+  const replyForHello =
+    helloReply ?? Buffer.concat([Buffer.from([0x0e, 0x01, 0x00]), Buffer.from('RONGTA_PV2.0\0', 'latin1')]);
   const socket = dgram.createSocket('udp4');
   const received = [];
   socket.on('message', (msg, rinfo) => {
@@ -28,7 +30,7 @@ async function startFakeScale({ dropFrameIndex = -1, silent = false } = {}) {
     if (silent) return;
     if (dropFrameIndex >= 0 && received.length - 1 === dropFrameIndex) return;
     const isHello = msg.length > 1 && msg[0] === 0x0e && msg[1] === 0x01;
-    const reply = isHello ? Buffer.concat([Buffer.from([0x0e, 0x01, 0x00]), Buffer.from('RONGTA_PV2.0\0', 'latin1')]) : Buffer.alloc(0);
+    const reply = isHello ? replyForHello : Buffer.alloc(0);
     socket.send(reply, rinfo.port, rinfo.address);
   });
   await new Promise((resolve) => socket.bind(0, '127.0.0.1', resolve));
@@ -104,6 +106,17 @@ test('probe reads the model string from the hello reply', async () => {
   try {
     const result = await probeScale({ host: '127.0.0.1', port: scale.port, timeoutMs: 300 });
     assert.match(result.model, /RONGTA_PV2\.0/);
+  } finally {
+    await scale.close();
+  }
+});
+
+test('probe reports no model when the scale only acknowledges the hello', async () => {
+  const scale = await startFakeScale({ helloReply: Buffer.from([0x0e]) });
+  try {
+    const result = await probeScale({ host: '127.0.0.1', port: scale.port, timeoutMs: 300 });
+    assert.equal(result.model, null);
+    assert.equal(result.replyLength, 1);
   } finally {
     await scale.close();
   }

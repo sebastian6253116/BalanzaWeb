@@ -96,8 +96,10 @@ printed on every label. The capture alone cannot prove the order, because it was
 scale printed **26/11/2002**, proving byte `[7]` is the year. No other frame in either capture
 carries a date, so this hello is the only clock transport we know of.
 
-Scale reply: **263-byte** payload starting `0E 01 00` followed by its model string
-(`RONGTA_PV2.0`). The reply's own trailing bytes were not isolated (`40 04 A5 49` observed).
+Scale reply: a **1-byte ACK**. Verified on 2026-11-04 against the four scales of
+DR PORTILLO, answering in 16-25 ms. Those units **do not return a model string**, and
+the earlier claim of a 263-byte payload was not reproducible. The probe therefore
+reports `model: not reported by the scale` when the reply carries no model text.
 
 ### 3.2 `0E 02` — goodbye
 

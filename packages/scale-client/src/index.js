@@ -20,7 +20,6 @@ import {
 } from '../../plu-format/src/index.js';
 
 export const DEFAULT_PORT = 5001;
-const MODEL_STRING = 'RONGTA_PV2.0';
 
 export class ScaleError extends Error {
   constructor(message, details = {}) {
@@ -106,14 +105,19 @@ async function sendFrame(io, frame, { host, port, timeoutMs, retries, label, exp
   throw new ScaleError(`${label}: unreachable`);
 }
 
-/** Send a hello frame and return the model string reported by the scale. */
+/**
+ * Send a hello frame and return the model string reported by the scale.
+ *
+ * `model` is `null` when the reply carries no model text: some units answer the
+ * hello with a bare 1-byte ACK. Guessing the model there would be fabricated data.
+ */
 export async function probeScale({ host, port = DEFAULT_PORT, timeoutMs = 1000, retries = 2 } = {}) {
   const io = openSocket();
   try {
     const result = await sendFrame(io, buildHello(), { host, port, timeoutMs, retries, label: 'hello', expectReply: true });
     const reply = result.reply;
     const text = reply.subarray(3).toString('latin1').split('\0')[0];
-    return { model: text || MODEL_STRING, replyLength: reply.length, ms: result.ms };
+    return { model: text || null, replyLength: reply.length, ms: result.ms };
   } finally {
     io.socket.close();
   }

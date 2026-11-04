@@ -185,13 +185,13 @@ test('the remote poll interval applies unless a local override is set', async ()
   assert.equal(override.pollIntervalSeconds, 300);
 });
 
-async function startFakeScale({ ackAll = false } = {}) {
+async function startFakeScale({ ackAll = false, helloReply } = {}) {
   const socket = dgram.createSocket('udp4');
   socket.on('message', (msg, rinfo) => {
     const isHello = msg.length > 1 && msg[0] === 0x0e && msg[1] === 0x01;
     if (!isHello && !ackAll) return;
     const reply = isHello
-      ? Buffer.concat([Buffer.from([0x0e, 0x01, 0x00]), Buffer.from('RONGTA_PV2.0\0', 'latin1')])
+      ? (helloReply ?? Buffer.concat([Buffer.from([0x0e, 0x01, 0x00]), Buffer.from('RONGTA_PV2.0\0', 'latin1')]))
       : Buffer.alloc(0);
     socket.send(reply, rinfo.port, rinfo.address);
   });
@@ -238,6 +238,22 @@ test('probe reports the scale model when the hello is acknowledged', async () =>
     assert.equal(run.status, 0, `probe failed: ${run.stderr}`);
     assert.match(run.stdout, /RONGTA_PV2\.0/);
     assert.match(run.stdout, new RegExp(`hello reply from 127\\.0\\.0\\.1:${scale.port}`));
+  } finally {
+    await scale.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('probe says the model is not reported when the scale only acknowledges the hello', async () => {
+  const { home, env } = tempAgentHome('balanza-probe-nomodel-');
+  const scale = await startFakeScale({ helloReply: Buffer.from([0x0e]) });
+
+  try {
+    const run = await runAgent(['probe', '--host', '127.0.0.1', '--port', String(scale.port), '--timeout', '300'], env);
+    assert.equal(run.status, 0, `probe failed: ${run.stderr}`);
+    assert.match(run.stdout, /model: not reported by the scale/);
+    assert.match(run.stdout, /reply: 1 bytes/);
+    assert.doesNotMatch(run.stdout, /RONGTA_PV2\.0/, 'the model must never be guessed');
   } finally {
     await scale.close();
     rmSync(home, { recursive: true, force: true });

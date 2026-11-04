@@ -100,7 +100,8 @@ async function cmdProbe(flags) {
   const port = Number(flags.port ?? DEFAULT_PORT);
   const result = await probeScale({ host: ip, port, timeoutMs: Number(flags.timeout ?? 1000) });
   console.log(`scale ${ip}:${port} answered in ${result.ms} ms`);
-  console.log(`model: ${result.model} (${result.replyLength} byte reply)`);
+  const model = result.model ?? 'not reported by the scale';
+  console.log(`model: ${model} (${result.replyLength} byte reply)`);
 }
 
 async function cmdPush(path, flags) {

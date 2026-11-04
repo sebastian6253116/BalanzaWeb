@@ -229,7 +229,8 @@ async function probe(flags) {
   }
 
   console.log(`hello reply from ${host}:${port} in ${result.ms} ms`);
-  console.log(`model: ${result.model}`);
+  const model = typeof result.model === 'string' && result.model.length > 0 ? result.model : 'not reported by the scale';
+  console.log(`model: ${model}`);
   console.log(`reply: ${result.replyLength} bytes`);
 }
 
