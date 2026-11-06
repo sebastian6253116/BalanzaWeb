@@ -166,9 +166,17 @@ cuerpo traiga `acceptGeneralChanges: true`. Con `syncFromGeneral: true` sincroni
 publica en una sola transacción (no requiere `articles.write`); si la sede tiene
 overrides propios responde `409` con `overrides` salvo que el cuerpo traiga
 `expectedOverrides` con exactamente ese número (la web lo envía con el valor que el
-operador vio en el diálogo, así que un conteo viejo no pasa). `GET /api/sedes`
-informa por sede `generalAhead`, `articlesAhead`, `overrides` y `pendingChanges`
-(maestro distinto de la última publicación o general adelantado).
+operador vio en el diálogo, así que un conteo viejo no pasa). También responde `409`
+si el maestro de la sede tiene menos artículos que el general (por ejemplo, filas
+borradas a mano de la base o datos migrados de antes de que existiera la cascada):
+`the sede master has N of M articles; sync it from the general master (Artículos →
+Sincronizar, or publish with sync) first`, con los campos `articles` y
+`generalArticles`, porque publicar un maestro incompleto mandaría a las balanzas un
+catálogo con artículos faltantes. Un maestro vacío se rechaza antes, con su propio
+mensaje. `GET /api/sedes`
+informa por sede `generalAhead`, `articlesAhead`, `overrides`, `missingArticles`
+(`max(0, artículos activos del general - artículos de la sede)`) y `pendingChanges`
+(maestro distinto de la última publicación, general adelantado o maestro incompleto).
 `POST /api/sedes/:id/articles/sync` devuelve
 `{ articles, created, updated, removed, priceChanges, valueChanges, overrides, pendingSedes }`.
 
@@ -236,14 +244,16 @@ agente la baja en su próximo ciclo.
 
 Dos maestros de artículos: el **general** (`articles`) y uno por sede
 (`sede_articles`, copia materializada). Cada sede tiene los mismos artículos que el
-general; sólo pueden diferir los valores. Crear es sólo en el general y se copia a
+general; sólo pueden diferir los valores. Ese es el invariante: un maestro de sede
+incompleto se rechaza al publicar (`409`), porque la balanza recibiría un catálogo
+con artículos faltantes. Crear es sólo en el general y se copia a
 todas las sedes. Editar el general **no** cambia los maestros de sede: el cambio
 llega a una sede recién al sincronizarla o al publicarla con sincronización. Editar
 una sede afecta sólo a esa sede. Borrar en el general borra también la copia de cada
 sede (cascada), y la carga masiva (`PUT /api/articles`) reconstruye todos los
-maestros de sede: responde `409` con `overrides` si perdería overrides por sede y
-sólo continúa con `acceptSedeOverridesLoss: true` (entonces devuelve
-`sedeOverridesDiscarded`).
+maestros de sede: responde `409` con `overrides` si perdería valores por sede y
+sólo continúa si el cuerpo trae `expectedOverrides` con exactamente ese número
+(entonces devuelve `sedeOverridesDiscarded`).
 
 ## 7. Base de datos
 
@@ -268,7 +278,7 @@ node --test packages/plu-format/test/plu-format.test.js `
                apps/web/test/barcode.test.js
 ```
 
-**124 tests, todos verdes.** Incluyen:
+**162 tests, todos verdes.** Incluyen:
 
 - Golden byte-a-byte de los **832 registros** y de **todas las tramas de control**
   contra las capturas reales (fixture inmutable `test/fixtures/plu-832-original.txp`).
@@ -322,7 +332,7 @@ node --test packages/plu-format/test/plu-format.test.js `
 | Hecho | **API lista para desplegar** (un solo proceso sirve API y web compilada, `/healthz`, headers de seguridad, rate limit de login, logs por request, archivos estáticos con fallback SPA, Dockerfile + compose + Caddy) | Implementado en `apps/api/src/app.js` e `apps/api/src/index.js`; artefactos en `deploy/` y guía en `docs/deploy.md` |
 | Hecho | **Despliegue en VPS + HTTPS** | Corriendo en Dokploy (Docker + Traefik + Let's Encrypt) desde `main`, con auto-deploy. Ver sección 15 |
 | Hecho | **Maestro de artículos en producción** | 835 artículos cargados con `PUT /api/articles` y persistidos en el volumen. 23 tienen precio 0 en el archivo original y se dejan así a propósito. Todos quedaron con 365 días de validez (ver §10 y `scripts/set-validity.mjs`) |
-| Hecho | **Maestro de artículos por sede** | Cada sede publica su propio maestro: crear copia el artículo a todas las sedes, editar el general no toca las sedes hasta sincronizar o publicar, editar una sede afecta sólo a esa sede, borrar en el general borra en todas y la carga masiva reconstruye todos los maestros de sede pidiendo confirmación explícita (`acceptSedeOverridesLoss`) |
+| Hecho | **Maestro de artículos por sede** | Cada sede publica su propio maestro: crear copia el artículo a todas las sedes, editar el general no toca las sedes hasta sincronizar o publicar, editar una sede afecta sólo a esa sede, borrar en el general borra en todas y la carga masiva reconstruye todos los maestros de sede pidiendo confirmación con el conteo exacto (`expectedOverrides`) |
 | Hecho | **Administración completa de sedes, balanzas y usuarios** | Alta, baja y edición; ver sección 15 |
 | Hecho | **Flujo completo con hardware**: sede + balanza + publicación + agente real | Agente 1.0.1 instalado y enrolado en dos sedes; publicaciones reales aplicadas en las balanzas que responden. La 1.0.2 se instaló en la sede y se verificó que la fecha de las etiquetas sale correcta; la 1.0.3 está publicada y pendiente de instalar |
 | Alta | **Balanzas que rechazan `start` en DR PORTILLO** (`.200`, `.202`, `.203`; CHARCUTERIA `.201` responde bien) | Verificado el 2026-11-04 desde la red de la sede: las cuatro contestan `hello` y `goodbye`, pero las tres que fallan **ignoran todo frame `D2`** (`start`, `data`, `commit`, `end`) mientras la `.201` ACKea cualquier `D2`. No es red, ni modelo, ni el contenido del frame: las tres nunca entran en modo descarga. Se probaron variantes de `start` y un `goodbye` previo sin efecto. El 2026-11-04 se probó y se descartó la hipótesis Aclas: ninguna de las cuatro responde el descubrimiento de Aclas Link69 (`71 03`) en UDP 5002 ni abre TCP 5001, y las cuatro ACKean el hello con 1 byte, así que la diferencia entre la `.201` que funciona y las tres que fallan es configuración por balanza, no marca ni protocolo. Falta la acción física: apagar/encender la balanza y, si sigue, revisar en el menú la IP de maestro y el modo de comunicación |

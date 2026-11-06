@@ -379,7 +379,13 @@ export default function Articles({ user }) {
     setMenu(null);
     // Deleting is a general-master operation only; the action is hidden in sede scope.
     if (scope !== SCOPE_GENERAL || interactionsBlocked) return;
-    if (!window.confirm(`¿Eliminar "${article.name}" (código ${article.barcode})?`)) return;
+    const confirmation = [
+      `¿Eliminar "${article.name}" (código ${article.barcode})?`,
+      '',
+      'También se quita de todas las sedes, incluidos los valores que cada sede tenga para este artículo.',
+      'Esta acción no se puede deshacer.',
+    ].join('\n');
+    if (!window.confirm(confirmation)) return;
     try {
       await api(`/articles/${article.id}`, { method: 'DELETE' });
       setNotice('Artículo eliminado. Queda pendiente de publicar.');

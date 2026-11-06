@@ -714,11 +714,16 @@ test('bulk import leaves every sede master in sync with the new general rows', a
     { name: 'BULK TRES', lfCode: 3, pluNumber: 3, barcode: 21003, priceCents: 333, unitCode: 4, department: 21, validityDays: 30, packageType: 0 },
   ];
 
-  // Earlier tests leave per-sede overrides behind, so the import needs explicit
-  // consent: it replaces every sede master and would discard them.
+  // Earlier tests leave per-sede overrides behind, so the import needs the live
+  // count as consent: it replaces every sede master and would discard them.
+  const before = await (await api('/api/sedes')).json();
+  const liveOverrides = before.sedes.reduce(
+    (total, sede) => total + (Number(sede.overrides) || 0),
+    0,
+  );
   const res = await api('/api/articles', {
     method: 'PUT',
-    body: { articles: imported, acceptSedeOverridesLoss: true },
+    body: { articles: imported, expectedOverrides: liveOverrides },
   });
   assert.equal(res.status, 200);
 
@@ -738,7 +743,7 @@ test('bulk import leaves every sede master in sync with the new general rows', a
   }
 });
 
-test('bulk import refuses to discard per-sede overrides unless told to', async () => {
+test('bulk import refuses a stale override count and accepts the live one', async () => {
   // Clear every existing override so the counts below are unambiguous.
   await syncAllSedes();
 
@@ -757,13 +762,18 @@ test('bulk import refuses to discard per-sede overrides unless told to', async (
     { name: 'FINAL DOS', lfCode: 2, pluNumber: 2, barcode: 22002, priceCents: 20, unitCode: 4, department: 21, validityDays: 30, packageType: 0 },
   ];
 
-  const refused = await api('/api/articles', { method: 'PUT', body: { articles: imported } });
+  // The operator confirmed zero, but the sede now has one row with its own values:
+  // the import must refuse instead of trusting the stale confirmation.
+  const refused = await api('/api/articles', {
+    method: 'PUT',
+    body: { articles: imported, expectedOverrides: 0 },
+  });
   assert.equal(refused.status, 409);
   const refusal = await refused.json();
   assert.equal(refusal.overrides, 1);
   assert.equal(
     refusal.error,
-    'the import would discard 1 per-sede overrides; resend with acceptSedeOverridesLoss: true',
+    'the import would replace 1 per-sede value that differs from the general master; resend with expectedOverrides: 1 (send it as a JSON number)',
   );
 
   // A refused import must not touch anything.
@@ -782,7 +792,7 @@ test('bulk import refuses to discard per-sede overrides unless told to', async (
 
   const accepted = await api('/api/articles', {
     method: 'PUT',
-    body: { articles: imported, acceptSedeOverridesLoss: true },
+    body: { articles: imported, expectedOverrides: 1 },
   });
   assert.equal(accepted.status, 200);
   assert.equal((await accepted.json()).sedeOverridesDiscarded, 1);
@@ -1086,7 +1096,7 @@ test('syncFromGeneral publishes the general values in one call', async () => {
   });
   assert.equal(refused.status, 409, 'a sync that would discard overrides needs explicit consent');
   assert.deepEqual(await refused.json(), {
-    error: 'the sede has 1 article that differs from the general master right now; confirm with expectedOverrides: 1',
+    error: 'the sede has 1 article that differs from the general master right now; confirm with expectedOverrides: 1 (send it as a JSON number)',
     overrides: 1,
   });
   assert.equal((await getSedeSummary(sede.id)).overrides, 1, 'the refused sync leaves the master untouched');
@@ -1187,7 +1197,7 @@ test('a stale expectedOverrides is refused with the real count and changes nothi
   const before = await getSedeSummary(sede.id);
   assert.equal(before.overrides, 2);
   const deploymentsBefore = db.get('SELECT COUNT(*) AS n FROM deployments WHERE sede_id = ?', sede.id).n;
-  const expectedError = 'the sede has 2 articles that differ from the general master right now; confirm with expectedOverrides: 2';
+  const expectedError = 'the sede has 2 articles that differ from the general master right now; confirm with expectedOverrides: 2 (send it as a JSON number)';
 
   const refused = await api(`/api/sedes/${sede.id}/deployments`, {
     method: 'POST',
@@ -1221,6 +1231,54 @@ test('a stale expectedOverrides is refused with the real count and changes nothi
   assert.equal(deployment.revision, before.revision + 1);
   assert.equal(deployment.sync.overrides, 2);
   assert.equal((await getSedeSummary(sede.id)).overrides, 0, 'the accepted sync cleared the overrides');
+
+  await syncAllSedes();
+});
+
+test('a boolean expectedOverrides cannot authorise discarding one override', async () => {
+  await syncAllSedes();
+  const sede = await createSede();
+  const general = await (await api('/api/articles')).json();
+  const article = general.articles[0];
+
+  // Exactly one row differs, so `Number(true) === 1` used to satisfy the gate.
+  const override = await api(`/api/articles/${article.id}?sedeId=${sede.id}`, {
+    method: 'PATCH',
+    body: { priceCents: article.priceCents + 250 },
+  });
+  assert.equal(override.status, 200);
+  const before = await getSedeSummary(sede.id);
+  assert.equal(before.overrides, 1);
+  const deploymentsBefore = db.get('SELECT COUNT(*) AS n FROM deployments WHERE sede_id = ?', sede.id).n;
+
+  const refusedSync = await api(`/api/sedes/${sede.id}/articles/sync`, {
+    method: 'POST',
+    body: { expectedOverrides: true },
+  });
+  assert.equal(refusedSync.status, 409, 'a boolean is not a count');
+  assert.deepEqual(await refusedSync.json(), {
+    error: 'the sede has 1 article that differs from the general master right now; confirm with expectedOverrides: 1 (send it as a JSON number)',
+    overrides: 1,
+  });
+
+  const refusedDeploy = await api(`/api/sedes/${sede.id}/deployments`, {
+    method: 'POST',
+    body: { syncFromGeneral: true, expectedOverrides: true },
+  });
+  assert.equal(refusedDeploy.status, 409, 'the deploy-with-sync gate applies the same rule');
+  assert.deepEqual(await refusedDeploy.json(), {
+    error: 'the sede has 1 article that differs from the general master right now; confirm with expectedOverrides: 1 (send it as a JSON number)',
+    overrides: 1,
+  });
+
+  const after = await getSedeSummary(sede.id);
+  assert.equal(after.revision, before.revision, 'a refused deploy must not bump the revision');
+  assert.equal(after.overrides, 1, 'a refused sync must leave the override in place');
+  assert.equal(
+    db.get('SELECT COUNT(*) AS n FROM deployments WHERE sede_id = ?', sede.id).n,
+    deploymentsBefore,
+    'a refused deploy must not create a deployment row',
+  );
 
   await syncAllSedes();
 });
@@ -1302,6 +1360,153 @@ test('the sede article list reports differsFromGeneral per row', async () => {
   const master = await getSedeMaster(sede.id);
   assert.equal(master.articles.find((item) => item.id === edited.id).differsFromGeneral, true);
   assert.equal(master.articles.find((item) => item.id === untouched.id).differsFromGeneral, false);
+
+  await syncAllSedes();
+});
+
+test('publishing refuses a sede master missing rows', async () => {
+  const sede = await createSede();
+  const general = await (await api('/api/articles')).json();
+  assert.ok(general.articles.length >= 2, 'the incomplete count below must be meaningful');
+
+  // Simulate a master missing rows (manual database deletion, or data migrated
+  // from before the cascade existed): one general article has no copy in this
+  // sede. The general master itself is unchanged, so only the completeness guard
+  // can catch it.
+  db.run('DELETE FROM sede_articles WHERE sede_id = ? AND article_id = ?', sede.id, general.articles[0].id);
+
+  // The gap must be visible in GET /api/sedes with `generalAhead` still false:
+  // that is exactly the case where the sync checkbox used to disappear.
+  const summary = await getSedeSummary(sede.id);
+  assert.equal(summary.missingArticles, 1, 'the missing row is reported');
+  assert.equal(summary.generalAhead, false, 'the general master did not move');
+  assert.equal(summary.pendingChanges, true, 'an incomplete master is pending');
+
+  const refused = await api(`/api/sedes/${sede.id}/deployments`, { method: 'POST', body: {} });
+  assert.equal(refused.status, 409, 'an incomplete master must not be published');
+  assert.deepEqual(await refused.json(), {
+    error: `the sede master has ${general.articles.length - 1} of ${general.articles.length} articles; sync it from the general master (Artículos → Sincronizar, or publish with sync) first`,
+    articles: general.articles.length - 1,
+    generalArticles: general.articles.length,
+  });
+  assert.equal(
+    db.get('SELECT COUNT(*) AS n FROM deployments WHERE sede_id = ?', sede.id).n,
+    0,
+    'a refused publish must not create a deployment row',
+  );
+
+  const synced = await api(`/api/sedes/${sede.id}/articles/sync`, {
+    method: 'POST',
+    body: { expectedOverrides: 0 },
+  });
+  assert.equal(synced.status, 200);
+  assert.equal((await getSedeSummary(sede.id)).missingArticles, 0, 'the sync closes the gap');
+
+  const published = await api(`/api/sedes/${sede.id}/deployments`, { method: 'POST', body: {} });
+  assert.equal(published.status, 201, 'the repaired master publishes normally');
+  assert.equal((await published.json()).articleCount, general.articles.length);
+
+  await syncAllSedes();
+});
+
+test('the .Txp export scoped to a sede carries the sede suffix and its own price', async () => {
+  const sede = await createSede();
+  const general = await (await api('/api/articles')).json();
+  const article = general.articles[0];
+  assert.ok(article);
+  const sedePrice = article.priceCents + 321;
+
+  const override = await api(`/api/articles/${article.id}?sedeId=${sede.id}`, {
+    method: 'PATCH',
+    body: { priceCents: sedePrice },
+  });
+  assert.equal(override.status, 200);
+
+  const res = await api(`/api/articles/export?format=txp&sedeId=${sede.id}`);
+  assert.equal(res.status, 200);
+  assert.match(
+    res.headers.get('content-disposition'),
+    /maestro-balanza-\d{8}-sede-master-\d+-\d+\.txp/,
+    'the attachment name must carry the sede suffix',
+  );
+
+  const rows = parseTxpText(await res.text());
+  const exported = rows.find((row) => row.barcode === article.barcode);
+  assert.ok(exported, 'the sede export must contain the article');
+  assert.equal(exported.priceCents, sedePrice, 'the export must use the sede price');
+  assert.notEqual(exported.priceCents, article.priceCents, 'the general price must not win');
+
+  await syncAllSedes();
+});
+
+test('GET /api/catalog?sedeId returns the sede hash and article count', async () => {
+  const sede = await createSede();
+  const general = await (await api('/api/catalog')).json();
+
+  const fresh = await (await api(`/api/catalog?sedeId=${sede.id}`)).json();
+  assert.equal(fresh.articleCount, general.articleCount, 'a new sede starts with the full catalogue');
+  assert.equal(fresh.hash, general.hash, 'an untouched sede hashes like the general master');
+  assert.match(fresh.hash, /^[0-9a-f]{64}$/);
+
+  const article = general.articles[0];
+  assert.ok(article);
+  const override = await api(`/api/articles/${article.id}?sedeId=${sede.id}`, {
+    method: 'PATCH',
+    body: { priceCents: article.priceCents + 111 },
+  });
+  assert.equal(override.status, 200);
+
+  const scoped = await (await api(`/api/catalog?sedeId=${sede.id}`)).json();
+  assert.equal(scoped.articleCount, general.articleCount, 'the count does not change when only values do');
+  assert.notEqual(scoped.hash, general.hash, 'the sede hash describes its own values');
+
+  await syncAllSedes();
+});
+
+test('the scoped article read rejects an invalid or missing sede', async () => {
+  const invalid = await api('/api/articles?sedeId=abc');
+  assert.equal(invalid.status, 400);
+  assert.equal((await invalid.json()).error, 'invalid sedeId');
+
+  const missing = await api('/api/articles?sedeId=9999');
+  assert.equal(missing.status, 404);
+  assert.equal((await missing.json()).error, 'sede not found');
+});
+
+test('importing articles into a sede is refused', async () => {
+  const sede = await createSede();
+
+  const res = await api(`/api/articles?sedeId=${sede.id}`, {
+    method: 'PUT',
+    body: { articles: [] },
+  });
+  assert.equal(res.status, 409);
+  assert.equal((await res.json()).error, 'articles are imported into the general master');
+});
+
+test('differsFromGeneral turns true after a general edit the sede has not received', async () => {
+  const sede = await createSede();
+  const general = await (await api('/api/articles')).json();
+  const article = general.articles[0];
+  assert.ok(article);
+
+  const before = await getSedeMaster(sede.id);
+  assert.equal(before.articles.find((item) => item.id === article.id).differsFromGeneral, false);
+
+  await tick();
+  const edited = await api(`/api/articles/${article.id}`, {
+    method: 'PATCH',
+    body: { priceCents: article.priceCents + 77 },
+  });
+  assert.equal(edited.status, 200);
+
+  const after = await getSedeMaster(sede.id);
+  assert.equal(
+    after.articles.find((item) => item.id === article.id).differsFromGeneral,
+    true,
+    'the sede copy still holds the old values, so it differs from the general master',
+  );
+  assert.equal((await getSedeSummary(sede.id)).generalAhead, true);
 
   await syncAllSedes();
 });

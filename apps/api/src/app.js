@@ -463,6 +463,16 @@ export function createApp({
   }
 
   /**
+   * Content-bound consent: the client must echo back the exact integer count it
+   * showed the operator. Only a real number qualifies, because `Number(true)`
+   * and `Number('1')` are both 1 and would let a stray boolean or string
+   * authorise the loss of exactly one override.
+   */
+  function overrideConsentMatches(value, overrides) {
+    return typeof value === 'number' && Number.isInteger(value) && value === overrides;
+  }
+
+  /**
    * Give every sede an initial master. Sedes created before the catalogue existed
    * (or before this feature shipped) start empty and are filled from the general one.
    * Safe to call on every boot: sedes that already have rows are left alone.
@@ -509,17 +519,24 @@ export function createApp({
   }
 
   /**
-   * How many sedes need attention: either their own master differs from the last
-   * deployment, or the general master moved ahead of their copy.
+   * How many sedes need attention, using the same three signals as the
+   * `pendingChanges` flag on `GET /api/sedes`: the master differs from the last
+   * deployment, the general master moved ahead of their copy, or the master is
+   * missing articles. Counting only the first two let a sede report
+   * `pendingChanges: true` next to `pendingSedes: 0`.
    */
   function pendingSedeCount() {
+    const generalCount = activeArticleRows().length;
     const rows = db.all(
       `SELECT s.id,
               (SELECT d.catalog_hash FROM deployments d WHERE d.sede_id = s.id ORDER BY d.revision DESC LIMIT 1) AS last_hash
          FROM sedes s`,
     );
     return rows.filter(
-      (row) => row.last_hash !== sedeCatalogState(row.id).hash || generalAheadCount(row.id) > 0,
+      (row) =>
+        row.last_hash !== sedeCatalogState(row.id).hash ||
+        generalAheadCount(row.id) > 0 ||
+        sedeArticles(row.id).length < generalCount,
     ).length;
   }
 
@@ -894,13 +911,14 @@ export function createApp({
         if (!report.ok) return json(res, 422, { error: 'catalog rejected', validation: report });
 
         // The replace cascades every sede copy away, so per-sede overrides are lost.
-        // Ask first: a documented caller (scripts/set-validity.mjs) would otherwise
-        // wipe every per-sede price without noticing.
+        // Consent is bound to the live content: the caller echoes the number of rows
+        // that differ from the general master, so a stale confirmation is refused
+        // instead of silently destroying more than the operator approved.
         const sedeOverridesDiscarded = db.all('SELECT id FROM sedes')
           .reduce((total, sede) => total + differenceCount(sede.id), 0);
-        if (sedeOverridesDiscarded > 0 && body.acceptSedeOverridesLoss !== true) {
+        if (sedeOverridesDiscarded > 0 && !overrideConsentMatches(body.expectedOverrides, sedeOverridesDiscarded)) {
           return json(res, 409, {
-            error: `the import would discard ${sedeOverridesDiscarded} per-sede overrides; resend with acceptSedeOverridesLoss: true`,
+            error: `the import would replace ${sedeOverridesDiscarded} per-sede value${sedeOverridesDiscarded === 1 ? '' : 's'} that differ${sedeOverridesDiscarded === 1 ? 's' : ''} from the general master; resend with expectedOverrides: ${sedeOverridesDiscarded} (send it as a JSON number)`,
             overrides: sedeOverridesDiscarded,
           });
         }
@@ -991,9 +1009,9 @@ export function createApp({
         // Rows whose values differ from the general master: the number the client
         // showed the operator before asking for consent.
         const overrides = differenceCount(sede.id);
-        if (overrides > 0 && Number(body.expectedOverrides) !== overrides) {
+        if (overrides > 0 && !overrideConsentMatches(body.expectedOverrides, overrides)) {
           return json(res, 409, {
-            error: `the sede has ${overrides} article${overrides === 1 ? '' : 's'} that differ${overrides === 1 ? 's' : ''} from the general master right now; confirm with expectedOverrides: ${overrides}`,
+            error: `the sede has ${overrides} article${overrides === 1 ? '' : 's'} that differ${overrides === 1 ? 's' : ''} from the general master right now; confirm with expectedOverrides: ${overrides} (send it as a JSON number)`,
             overrides,
           });
         }
@@ -1011,6 +1029,7 @@ export function createApp({
       pattern: /^\/api\/sedes$/,
       permission: 'sedes.read',
       handler: async (req, res) => {
+        const generalCount = activeArticleRows().length;
         const sedes = db.all('SELECT * FROM sedes ORDER BY name').map((sede) => {
           const last = db.get(
             'SELECT catalog_hash FROM deployments WHERE sede_id = ? ORDER BY revision DESC LIMIT 1',
@@ -1018,13 +1037,17 @@ export function createApp({
           );
           const articlesAhead = generalAheadCount(sede.id);
           const overrides = differenceCount(sede.id);
+          const sedeCount = sedeArticles(sede.id).length;
           const unpublished = !last || last.catalog_hash !== sedeCatalogState(sede.id).hash;
           return {
             ...sede,
-            pendingChanges: unpublished || articlesAhead > 0,
+            pendingChanges: unpublished || articlesAhead > 0 || sedeCount < generalCount,
             generalAhead: articlesAhead > 0,
             articlesAhead,
             overrides,
+            // A master missing rows can never publish: expose the gap so the
+            // operator gets the sync checkbox even when `generalAhead` is 0.
+            missingArticles: Math.max(0, generalCount - sedeCount),
           };
         });
         return json(res, 200, { sedes });
@@ -1161,9 +1184,9 @@ export function createApp({
         // so a stale confirmation is refused instead of silently destroying more.
         if (syncRequested) {
           const overrides = differenceCount(sede.id);
-          if (overrides > 0 && Number(body.expectedOverrides) !== overrides) {
+          if (overrides > 0 && !overrideConsentMatches(body.expectedOverrides, overrides)) {
             return json(res, 409, {
-              error: `the sede has ${overrides} article${overrides === 1 ? '' : 's'} that differ${overrides === 1 ? 's' : ''} from the general master right now; confirm with expectedOverrides: ${overrides}`,
+              error: `the sede has ${overrides} article${overrides === 1 ? '' : 's'} that differ${overrides === 1 ? 's' : ''} from the general master right now; confirm with expectedOverrides: ${overrides} (send it as a JSON number)`,
               overrides,
             });
           }
@@ -1190,6 +1213,21 @@ export function createApp({
                 ? 'the general master is empty: upload articles before publishing'
                 : 'the sede master is empty; sync it from the general master first',
             );
+          }
+
+          // A sede master missing rows (manual database deletion, or data
+          // migrated from before the article cascade existed) would publish a
+          // catalogue missing articles. Compare against the live general master
+          // before writing the deployment. An empty master is rejected above,
+          // so this guard is about a partial gap.
+          const generalArticles = activeArticleRows().length;
+          if (articles.length !== generalArticles) {
+            db.exec('ROLLBACK');
+            return json(res, 409, {
+              error: `the sede master has ${articles.length} of ${generalArticles} articles; sync it from the general master (Artículos → Sincronizar, or publish with sync) first`,
+              articles: articles.length,
+              generalArticles,
+            });
           }
 
           // A general edit never reaches the sede on its own, and `pendingChanges`

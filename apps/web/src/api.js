@@ -13,21 +13,44 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(path, { method = 'GET', body } = {}) {
+export async function api(path, { method = 'GET', body, timeoutMs } = {}) {
   const headers = {};
   const token = getToken();
   if (token) headers.authorization = `Bearer ${token}`;
   if (body !== undefined) headers['content-type'] = 'application/json';
 
-  const response = await fetch(`/api${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  // Callers that must not leave the UI locked forever (for example a publish
+  // batch) pass a timeout. It guards a hung HTTP request, not the scale: the
+  // deploy endpoint only writes SQLite, so an abort means "unknown state",
+  // not "the sede stalled".
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const response = await fetch(`/api${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller?.signal,
+    });
 
-  const data = response.status === 204 ? null : await response.json().catch(() => null);
-  if (!response.ok) throw new ApiError(data?.error ?? `HTTP ${response.status}`, response.status, data);
-  return data;
+    const data = response.status === 204
+      ? null
+      : await response.json().catch((err) => {
+        // A body that stalls past the deadline rejects too; do not turn it into
+        // a silent null for a successful status.
+        if (controller?.signal.aborted) throw err;
+        return null;
+      });
+    if (!response.ok) throw new ApiError(data?.error ?? `HTTP ${response.status}`, response.status, data);
+    return data;
+  } catch (err) {
+    if (controller?.signal.aborted) {
+      throw new ApiError('La operación tardó demasiado; el resultado es desconocido.', 0, null);
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function attachmentName(header) {

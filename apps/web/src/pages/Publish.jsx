@@ -2,6 +2,29 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 
 const CHECK_LABEL = { display: 'flex', gap: 8, alignItems: 'center', color: 'inherit', fontSize: 14, margin: 0 };
+// A publish request must not hold the batch (and its busy lock) indefinitely.
+// The timeout guards a hung HTTP request, not the scale: the deploy endpoint
+// only writes SQLite and the agent pulls later, so an abort means "the server
+// may or may not have committed", never "the sede stalled".
+const DEPLOY_TIMEOUT_MS = 60000;
+// The `/sedes` refreshes run inside the busy-locked section, so they need the
+// same guard as the deploy: a hung read would otherwise hold the lock forever.
+// A timeout here is never fatal: the last list stays on screen and the lock is
+// released by the `finally` below.
+const SEDES_TIMEOUT_MS = 30000;
+
+/**
+ * Whether a sede must sync from the general master before it can be published.
+ *
+ * A sede missing articles is incomplete by definition: publishing it without a
+ * sync would ship a partial catalogue, so the sync is mandatory regardless of
+ * the checkbox state. `generalAhead` is only a recommendation, so the operator
+ * may uncheck it.
+ */
+function wantsSync(sede, syncBySede) {
+  if (Number(sede.missingArticles) > 0) return true;
+  return Boolean(sede.generalAhead) && syncBySede[String(sede.id)] !== false;
+}
 
 export default function Publish() {
   const [sedes, setSedes] = useState([]);
@@ -92,10 +115,16 @@ export default function Publish() {
       // as `expectedOverrides`, must be the count the API is about to destroy.
       let freshSedes;
       try {
-        const data = await api('/sedes');
+        const data = await api('/sedes', { timeoutMs: SEDES_TIMEOUT_MS });
         freshSedes = data.sedes;
       } catch (err) {
-        setError(`No se pudo refrescar la lista de sedes: ${err.message}`);
+        // A timeout leaves the list untouched and nothing was published; the
+        // operator must verify the sede state instead of trusting this screen.
+        setError(
+          err.status === 0
+            ? 'No se pudo confirmar la lista de sedes: la recarga tardó demasiado y no se publicó nada. Verificá el estado antes de reintentar.'
+            : `No se pudo refrescar la lista de sedes: ${err.message}`,
+        );
         return;
       }
       setSedes(freshSedes);
@@ -109,9 +138,7 @@ export default function Publish() {
       }
       const targets = freshSedes.filter((sede) => keptIds.includes(String(sede.id)));
 
-      const syncingSedes = targets.filter(
-        (sede) => Boolean(sede.generalAhead) && syncBySede[String(sede.id)] !== false,
-      );
+      const syncingSedes = targets.filter((sede) => wantsSync(sede, syncBySede));
 
       // A sync replaces the whole sede master: spell out what is destroyed before
       // the loop starts, not one confirm per sede halfway through the batch.
@@ -150,8 +177,8 @@ export default function Publish() {
       for (let index = 0; index < targets.length; index += 1) {
         const sede = targets[index];
         const key = String(sede.id);
-        const wantsSync = Boolean(sede.generalAhead) && syncBySede[key] !== false;
-        const entry = { sedeId: sede.id, sede: sede.name, ok: false, synced: wantsSync };
+        const sync = wantsSync(sede, syncBySede);
+        let entry;
 
         setProgress({ current: index + 1, total: targets.length });
 
@@ -166,7 +193,7 @@ export default function Publish() {
           // never leaves the master already overwritten. A sync already pulled
           // the general values, so `acceptGeneralChanges` is not needed (and is
           // only sent on the publish-without-sync path).
-          if (wantsSync) {
+          if (sync) {
             body.syncFromGeneral = true;
             // Content-bound consent: echo the override count shown above. If the
             // master changed in the meantime the API answers 409 instead of
@@ -176,13 +203,71 @@ export default function Publish() {
           // The operator saw the general-master warning and chose the sede master as-is.
           else if (sede.generalAhead) body.acceptGeneralChanges = true;
 
-          const deployment = await api(`/sedes/${sede.id}/deployments`, { method: 'POST', body });
-          entry.ok = true;
-          entry.revision = deployment.revision;
-          entry.articleCount = deployment.articleCount;
-          entry.syncCounts = deployment.sync;
+          const deployment = await api(`/sedes/${sede.id}/deployments`, {
+            method: 'POST',
+            body,
+            timeoutMs: DEPLOY_TIMEOUT_MS,
+          });
+          // Reading the fields is what confirms the deployment. A 2xx whose body
+          // died mid-read resolves to `null`, and touching it here would throw
+          // after success was already recorded: the summary would say the batch
+          // completed while this row printed an undefined revision. Treat a
+          // missing deployment as uncertain and build the entry only now.
+          if (!deployment || typeof deployment !== 'object') {
+            entry = {
+              sedeId: sede.id,
+              sede: sede.name,
+              ok: false,
+              uncertain: true,
+              synced: sync,
+              error: 'No se pudo confirmar la respuesta; verificá el estado de esta sede antes de reintentar.',
+            };
+          } else {
+            entry = {
+              sedeId: sede.id,
+              sede: sede.name,
+              ok: true,
+              uncertain: false,
+              synced: sync,
+              revision: deployment.revision,
+              articleCount: deployment.articleCount,
+              syncCounts: deployment.sync,
+            };
+          }
         } catch (err) {
-          entry.error = err.message;
+          // The request may have committed even though the response never
+          // arrived. A client abort (`status: 0`) and a network-level fetch
+          // failure (`TypeError`) both leave the outcome unknown. A gateway
+          // 502/503/504 is also unconfirmed: the proxy failed to relay the
+          // response, which does not mean the server did not commit. Report all
+          // of these as uncertain so the operator verifies instead of reading a
+          // failure that may not exist. A genuine 4xx (validation, consent,
+          // guards) is a failure and keeps its message.
+          if (
+            err.status === 0 ||
+            err.name === 'TypeError' ||
+            err.status === 502 ||
+            err.status === 503 ||
+            err.status === 504
+          ) {
+            entry = {
+              sedeId: sede.id,
+              sede: sede.name,
+              ok: false,
+              uncertain: true,
+              synced: sync,
+              error: 'No se pudo confirmar la respuesta; verificá el estado de esta sede antes de reintentar.',
+            };
+          } else {
+            entry = {
+              sedeId: sede.id,
+              sede: sede.name,
+              ok: false,
+              uncertain: false,
+              synced: sync,
+              error: err.message,
+            };
+          }
         }
 
         collected.push(entry);
@@ -191,13 +276,19 @@ export default function Publish() {
       setResults(collected);
 
       try {
-        const data = await api('/sedes');
+        const data = await api('/sedes', { timeoutMs: SEDES_TIMEOUT_MS });
         setSedes(data.sedes);
         setSelectedIds((current) =>
           current.filter((id) => data.sedes.some((sede) => String(sede.id) === id)),
         );
       } catch (err) {
-        setError(`No se pudo refrescar la lista de sedes: ${err.message}`);
+        // Keep the previous list: the batch already finished, so a failed
+        // refresh must not turn a completed publish into a fatal error.
+        setError(
+          err.status === 0
+            ? 'No se pudo confirmar el estado de las sedes: la recarga tardó demasiado y la lista quedó como estaba. Verificá antes de reintentar.'
+            : `No se pudo refrescar la lista de sedes: ${err.message}`,
+        );
       }
     } finally {
       // Releases the lock on every exit: cancel, refresh failure, or a batch end.
@@ -208,7 +299,10 @@ export default function Publish() {
   }
 
   const allOk = results !== null && results.length > 0 && results.every((entry) => entry.ok);
-  const failures = results ? results.filter((entry) => !entry.ok) : [];
+  // An uncertain seat is not a failure: the server may have committed. It gets
+  // its own list so the operator verifies instead of retrying blindly.
+  const uncertainResults = results ? results.filter((entry) => entry.uncertain) : [];
+  const failures = results ? results.filter((entry) => !entry.ok && !entry.uncertain) : [];
 
   return (
     <section>
@@ -264,7 +358,8 @@ export default function Publish() {
                 {sedes.map((sede) => {
                   const key = String(sede.id);
                   const checked = selectedIds.includes(key);
-                  const syncChecked = syncBySede[key] !== false;
+                  const incomplete = Number(sede.missingArticles) > 0;
+                  const syncChecked = incomplete || syncBySede[key] !== false;
                   return (
                     <tr key={sede.id}>
                       <td>
@@ -279,16 +374,32 @@ export default function Publish() {
                       </td>
                       <td>
                         {sede.name}
-                        {sede.generalAhead && (
+                        {(sede.generalAhead || Number(sede.missingArticles) > 0) && (
                           <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>
-                            El maestro general cambió en {sede.articlesAhead} artículo
-                            {sede.articlesAhead === 1 ? '' : 's'}.
+                            {sede.generalAhead && (
+                              <div>
+                                El maestro general cambió en {sede.articlesAhead} artículo
+                                {sede.articlesAhead === 1 ? '' : 's'}.
+                              </div>
+                            )}
+                            {Number(sede.missingArticles) > 0 && (
+                              <div>
+                                {sede.missingArticles === 1
+                                  ? 'Falta 1 artículo que el maestro general tiene.'
+                                  : `Faltan ${sede.missingArticles} artículos que el maestro general tiene.`}
+                              </div>
+                            )}
+                            {incomplete && (
+                              <div>
+                                Esta sede está incompleta: se sincroniza desde el maestro general antes de publicar.
+                              </div>
+                            )}
                             <label style={{ ...CHECK_LABEL, fontSize: 12.5, marginTop: 4 }}>
                               <input
                                 type="checkbox"
                                 style={{ width: 'auto' }}
                                 checked={syncChecked}
-                                disabled={busy || !checked}
+                                disabled={busy || !checked || incomplete}
                                 onChange={(event) =>
                                   setSyncBySede((current) => ({ ...current, [key]: event.target.checked }))
                                 }
@@ -404,6 +515,20 @@ export default function Publish() {
         </div>
       )}
 
+      {uncertainResults.length > 0 && (
+        <div className="alert info">
+          No se pudo confirmar la respuesta en {uncertainResults.length} sede
+          {uncertainResults.length === 1 ? '' : 's'}. Verificá su estado antes de reintentar:
+          <ul>
+            {uncertainResults.map((entry) => (
+              <li key={entry.sedeId}>
+                <strong>{entry.sede}</strong>: {entry.error}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {failures.length > 0 && (
         <div className="alert error">
           No se pudo publicar en {failures.length} sede{failures.length === 1 ? '' : 's'}:
@@ -436,6 +561,11 @@ export default function Publish() {
                       <>
                         Revisión <strong>{entry.revision}</strong> publicada con {entry.articleCount} artículo
                         {entry.articleCount === 1 ? '' : 's'}.
+                      </>
+                    ) : entry.uncertain ? (
+                      <>
+                        <span className="badge warn">sin confirmar</span>{' '}
+                        <span className="muted">{entry.error}</span>
                       </>
                     ) : (
                       <span style={{ color: 'var(--danger)' }}>{entry.error}</span>
