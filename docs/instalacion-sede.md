@@ -72,21 +72,34 @@ administra el sistema. Cómo se genera y publica una versión nueva está en
 
 - Página de releases:
   <https://github.com/sebastian6253116/BalanzaWeb/releases>
-- Release de la versión 1.0.3:
+- Release de la versión 1.0.4, la que hay que instalar:
+  <https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.4>
+- Descarga directa del paquete 1.0.4:
+  <https://github.com/sebastian6253116/BalanzaWeb/releases/download/agent-v1.0.4/balanza-agent-1.0.4-win-x64.zip>
+- Release de la versión 1.0.3, que sigue publicada, por si hay que reinstalar la
+  anterior:
   <https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.3>
-- Descarga directa del paquete:
-  <https://github.com/sebastian6253116/BalanzaWeb/releases/download/agent-v1.0.3/balanza-agent-1.0.3-win-x64.zip>
 
-Para 1.0.3 el paquete es un único archivo de 40,87 MB:
+> La release 1.0.4 todavía **no está publicada**: el zip está compilado, empaquetado y
+> verificado, pero las URLs de arriba recién existen después de crearla en GitHub (ver
+> [`agent-release.md`](agent-release.md) §5). Mientras tanto, el paquete 1.0.4 se
+> entrega por USB o red interna.
+>
+> Si en cambio se instala la 1.0.3, reemplazá `1.0.4` por `1.0.3` en el nombre del
+> archivo, en las carpetas y en cada comando de las secciones §4 y §5, y usá el SHA-256
+> de esa release (`agent-release.md` §6). No mezcles el nombre de una versión con el
+> hash de la otra.
+
+Para 1.0.4 el paquete es un único archivo de 40,87 MB:
 
 ```
-balanza-agent-1.0.3-win-x64.zip
+balanza-agent-1.0.4-win-x64.zip
 ```
 
 Su SHA-256 de referencia es:
 
 ```
-0680e9ff874b041f255c91b078898883b5445a1d0c1ad9c6529d8130490f13dc
+65449c82237049cb65ab0a13bd20c51221634476cf3d2601e4a81c5d3511ad34
 ```
 
 **Verificación de integridad.** El zip se entrega junto con su SHA-256, que es el
@@ -94,16 +107,16 @@ valor que imprime `npm run agent:package` al generarlo (línea `sha256: ...`). E
 PC de la sede, en la carpeta donde está el zip:
 
 ```powershell
-Get-FileHash .\balanza-agent-1.0.3-win-x64.zip -Algorithm SHA256
+Get-FileHash .\balanza-agent-1.0.4-win-x64.zip -Algorithm SHA256
 ```
 
 El campo `Hash` tiene que coincidir con el valor de referencia. El valor hexadecimal
 es el mismo en mayúsculas o minúsculas. Si no coincide, el archivo llegó incompleto o
 fue alterado: no lo instale y pida el paquete de nuevo.
 
-> El hash de arriba es el del zip 1.0.3 publicado. Si se regenera el zip, aunque la
-> versión sea la misma, el hash cambia: hay que usar el que imprimió
-> `npm run agent:package` y quedó anotado en la release.
+> El hash de arriba es el del zip 1.0.4 empaquetado y **pendiente de publicación**. Si
+> se regenera el zip, aunque la versión sea la misma, el hash cambia: hay que usar el
+> que imprimió `npm run agent:package` y actualizar esta guía antes de entregarlo.
 
 **El ejecutable no está firmado.** Por eso:
 
@@ -117,13 +130,13 @@ fue alterado: no lo instale y pida el paquete de nuevo.
 - Si el zip descargado quedó bloqueado y el script no arranca, desbloquéelo:
 
   ```powershell
-  Unblock-File .\balanza-agent-1.0.3-win-x64.zip
+  Unblock-File .\balanza-agent-1.0.4-win-x64.zip
   ```
 
 ## 5. Paso 2 — instalar el servicio
 
 1. Descomprima el zip en una carpeta local, por ejemplo `C:\Instaladores\`. Windows
-   crea la carpeta `balanza-agent-1.0.3-win-x64` con todo el contenido plano:
+   crea la carpeta `balanza-agent-1.0.4-win-x64` con todo el contenido plano:
 
    ```
    balanza-agent.exe
@@ -145,7 +158,7 @@ fue alterado: no lo instale y pida el paquete de nuevo.
 3. Ubíquese en la carpeta extraída (ajuste la ruta a la suya):
 
    ```powershell
-   Set-Location "C:\Instaladores\balanza-agent-1.0.3-win-x64"
+   Set-Location "C:\Instaladores\balanza-agent-1.0.4-win-x64"
    ```
 
 4. Confirme que están los archivos antes de ejecutar:
@@ -305,9 +318,9 @@ scales waiting: 0
 publicaciones todavía.
 
 La línea `scales waiting` y el backoff por balanza (reintentos a 60 s, 120 s,
-240 s… hasta 15 minutos) son comportamiento de la **1.0.3**, que es la última
-versión publicada. Una instalación 1.0.2 simplemente omite esa línea y reintenta
-cada balanza en cada ciclo, sin espera entre intentos.
+240 s… hasta 15 minutos) están desde la **1.0.3**, que sigue publicada, y la 1.0.4 los
+mantiene. Una instalación 1.0.2 simplemente omite esa línea y reintenta cada balanza
+en cada ciclo, sin espera entre intentos.
 
 **5. Versión instalada:**
 
@@ -316,11 +329,12 @@ cada balanza en cada ciclo, sin espera entre intentos.
 ```
 
 Esperado: `balanza-agent` seguido de la versión del paquete que se instaló:
-`balanza-agent 1.0.3` si se instaló el zip 1.0.3, `balanza-agent 1.0.2` si se
-instaló el 1.0.2. La última versión publicada es la **1.0.3**; la 1.0.2 sigue
-disponible por si hay que reinstalar. La versión que imprima el comando tiene que
-coincidir con el paquete que se instaló en esa PC, no con otra. Si alguna vez hay
-que soportar esa PC, este es el dato que hay que pedir: no hay otra forma de saber
+`balanza-agent 1.0.4` si se instaló el zip 1.0.4, `balanza-agent 1.0.3` si se instaló
+el 1.0.3, `balanza-agent 1.0.2` si se instaló el 1.0.2. La 1.0.4 es la versión a
+instalar (ya está empaquetada, pendiente de publicación); la 1.0.3 sigue publicada y
+la 1.0.2 sigue disponible por si hay que reinstalar. La versión que imprima el comando
+tiene que coincidir con el paquete que se instaló en esa PC, no con otra. Si alguna vez
+hay que soportar esa PC, este es el dato que hay que pedir: no hay otra forma de saber
 qué versión corre una vez instalada.
 
 **6. La PC llega a la API:**
@@ -476,10 +490,10 @@ una pista. El orden de descarte es:
    atienden una sola sesión y dejan de responder al saludo.
 5. Reiniciar la balanza (apagar y encender) para liberar una sesión colgada.
 
-No hace falta tocar la web: en la **1.0.3** el agente reintenta esa balanza con
+No hace falta tocar la web: desde la **1.0.3** el agente reintenta esa balanza con
 backoff por balanza (60 s, después 120 s, 240 s… hasta un tope de 15 minutos); la
-1.0.2 reintenta en cada ciclo, sin espera. Cuando la balanza vuelve a contestar, la
-revisión avanza sola.
+1.0.2 reintenta en cada ciclo, sin espera. La 1.0.4 conserva el mismo backoff. Cuando
+la balanza vuelve a contestar, la revisión avanza sola.
 
 Para reintentar en el acto sin esperar, usar `once --force`. Un `once` normal
 saltea por hash las balanzas que ya estaban al día, pero `--force` ignora ese hash
@@ -836,10 +850,10 @@ npm run agent:package
 `npm run agent:package` imprime al final:
 
 ```
-package: ...\apps\agent\dist\package\balanza-agent-1.0.3-win-x64
-zip:     ...\apps\agent\dist\balanza-agent-1.0.3-win-x64.zip
-size:    N MB
-sha256:  <hash que se entrega con el zip>
+package: ...\apps\agent\dist\package\balanza-agent-1.0.4-win-x64
+zip:     ...\apps\agent\dist\balanza-agent-1.0.4-win-x64.zip
+size:    40.87 MB
+sha256:  65449c82237049cb65ab0a13bd20c51221634476cf3d2601e4a81c5d3511ad34
 ```
 
 Ese `sha256` es el valor de referencia del Paso 1.

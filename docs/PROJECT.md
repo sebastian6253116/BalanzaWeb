@@ -5,8 +5,9 @@ Documento de traspaso. Última actualización: **2026-11-06**.
 **Estado en una línea:** desplegado en producción con Dokploy, catálogo real de 835
 artículos cargado (todos con 365 días de validez), agente 1.0.2 instalado y verificado
 en la sede (las etiquetas ya salen con la fecha correcta), agente 1.0.3 publicado y
-pendiente de instalar, y las tres balanzas de DR PORTILLO todavía rechazan `start` a la
-espera de la acción física.
+pendiente de instalar, agente 1.0.4 compilado, empaquetado y pendiente de publicación,
+y las tres balanzas de DR PORTILLO todavía rechazan `start` a la espera de la acción
+física.
 
 Resumen en una línea: web React en VPS + microservicio local que habla el
 **protocolo nativo** de las balanzas Rongta RLS1000 por **UDP**, sin instalar
@@ -198,8 +199,9 @@ informa por sede `generalAhead`, `articlesAhead`, `overrides`, `missingArticles`
 - `version` imprime `balanza-agent <version>`. La versión sale de
   `apps/agent/package.json` y queda embebida en el SEA, así que el ejecutable la
   reporta sin necesitar Node.
-- `probe --host <ip>` manda el `hello` del protocolo y reporta modelo, tamaño de la
-  respuesta y latencia: mide **alcanzabilidad**, sin Node en la sede. Con `--full`
+- `probe --host <ip>` manda el `hello` del protocolo y reporta el modelo solo si la
+  balanza lo devuelve, además del tamaño de la respuesta y la latencia: mide
+  **alcanzabilidad**, sin Node en la sede. Con `--full`
   agrega `start` y `goodbye`, imprime cada paso con su latencia y separa la
   alcanzabilidad de la **aceptación de la sesión de transferencia**: una balanza puede
   contestar `hello` y rechazar `start`. `--port`, `--timeout`, `--retries` y `--full`
@@ -320,7 +322,8 @@ node --test packages/plu-format/test/plu-format.test.js `
    autofirmado no es de confianza en otras PC y agrava la operación. La decisión de
    comprar un certificado real queda pendiente.
 10. **La versión del agente es independiente de la web y del API**: la fuente es
-    `apps/agent/package.json` (hoy `1.0.3`) y el tag de release es
+    `apps/agent/package.json` (hoy `1.0.4`, compilada y empaquetada, pendiente de
+    publicar; la 1.0.3 sigue publicada) y el tag de release es
     `agent-v<version>`. La web y el API pueden avanzar sin volver a publicar el
     agente, y viceversa.
 
@@ -334,7 +337,7 @@ node --test packages/plu-format/test/plu-format.test.js `
 | Hecho | **Maestro de artículos en producción** | 835 artículos cargados con `PUT /api/articles` y persistidos en el volumen. 23 tienen precio 0 en el archivo original y se dejan así a propósito. Todos quedaron con 365 días de validez (ver §10 y `scripts/set-validity.mjs`) |
 | Hecho | **Maestro de artículos por sede** | Cada sede publica su propio maestro: crear copia el artículo a todas las sedes, editar el general no toca las sedes hasta sincronizar o publicar, editar una sede afecta sólo a esa sede, borrar en el general borra en todas y la carga masiva reconstruye todos los maestros de sede pidiendo confirmación con el conteo exacto (`expectedOverrides`) |
 | Hecho | **Administración completa de sedes, balanzas y usuarios** | Alta, baja y edición; ver sección 15 |
-| Hecho | **Flujo completo con hardware**: sede + balanza + publicación + agente real | Agente 1.0.1 instalado y enrolado en dos sedes; publicaciones reales aplicadas en las balanzas que responden. La 1.0.2 se instaló en la sede y se verificó que la fecha de las etiquetas sale correcta; la 1.0.3 está publicada y pendiente de instalar |
+| Hecho | **Flujo completo con hardware**: sede + balanza + publicación + agente real | Agente 1.0.1 instalado y enrolado en dos sedes; publicaciones reales aplicadas en las balanzas que responden. La 1.0.2 se instaló en la sede y se verificó que la fecha de las etiquetas sale correcta; la 1.0.3 está publicada y pendiente de instalar; la 1.0.4 está empaquetada y pendiente de publicación |
 | Alta | **Balanzas que rechazan `start` en DR PORTILLO** (`.200`, `.202`, `.203`; CHARCUTERIA `.201` responde bien) | Verificado el 2026-11-04 desde la red de la sede: las cuatro contestan `hello` y `goodbye`, pero las tres que fallan **ignoran todo frame `D2`** (`start`, `data`, `commit`, `end`) mientras la `.201` ACKea cualquier `D2`. No es red, ni modelo, ni el contenido del frame: las tres nunca entran en modo descarga. Se probaron variantes de `start` y un `goodbye` previo sin efecto. El 2026-11-04 se probó y se descartó la hipótesis Aclas: ninguna de las cuatro responde el descubrimiento de Aclas Link69 (`71 03`) en UDP 5002 ni abre TCP 5001, y las cuatro ACKean el hello con 1 byte, así que la diferencia entre la `.201` que funciona y las tres que fallan es configuración por balanza, no marca ni protocolo. Falta la acción física: apagar/encender la balanza y, si sigue, revisar en el menú la IP de maestro y el modo de comunicación |
 | Hecho (decisión) | **23 artículos con precio 0**: se dejan en 0 | Decisión registrada: están en 0 a propósito y no se modifican. El precio se conserva tal cual al reimportar o ajustar el catálogo |
 | Hecho | **Días de validez del catálogo**: todos los artículos deben tener 365 días | Resuelto con `node scripts/set-validity.mjs --api <url> --user <user> --password <password>`; ver `docs/instalacion-sede.md` §11.3. Sigue siendo dato maestro editable por artículo en la web |
@@ -344,6 +347,7 @@ node --test packages/plu-format/test/plu-format.test.js `
 | Hecho | **Fecha de etiqueta corregida**: el `hello` mandaba día, mes y año; el orden correcto es año, mes y día | Corregido en 1.0.2. El 2026-11-02 un push hacía que la balanza imprimiera `26/11/2002`. `once --force` aplica la fecha correcta a toda la sede |
 | Media | **Cerrar las incógnitas abiertas del protocolo** (sección 11): `D204`, bytes `[93..123]`, obligatoriedad de `D207` y las **10 unidades sin confirmar** | Son datos inferidos; requieren capturas o pruebas en hardware |
 | Hecho | **Backoff por balanza** para el reintento de una balanza caída | Implementado en 1.0.3: 60 s de base, duplica en cada fallo y tope de 15 min; el estado se guarda en la config del agente y sobrevive un reinicio. El reporte solo se envía en el primer fallo, cuando cambia el error y cada 10 intentos, así que el historial deja de llenarse de filas idénticas |
+| Hecho | **`probe` deja de inventar el modelo** | Corregido en 1.0.4: cuando el `hello` no traía texto de modelo, `probe` imprimía un valor fijo (`RONGTA_PV2.0`) como si la balanza lo hubiera informado. Las cuatro balanzas de DR PORTILLO contestan con un ACK de 1 byte y ningún modelo, así que el dato era falso y desvió un diagnóstico en la sede. Ahora imprime `model: not reported by the scale`; `docs/protocol.md` §3.1 documenta el ACK de 1 byte verificado |
 | Baja | Aislar cuál de los tres defectos del catálogo original disparaba el aborto | Se puede hacer con el CLI, sin GUI |
 | Baja | Actualizar el texto de `Sedes.jsx` que todavía muestra `balanza-agent enroll ...` | La instalación ya usa la ventana de conexión; el texto quedó viejo |
 | Baja | Reutilizar `.table-cards` en las demás tablas | Sólo la tabla de usuarios se vuelve tarjetas; el resto sigue con scroll horizontal en móvil |

@@ -5,10 +5,24 @@ agente a una sede. Cubre el build, el empaquetado, la verificación y la publica
 del artefacto. El procedimiento del lado de la sede está en
 [`instalacion-sede.md`](instalacion-sede.md).
 
-**Estado:** la versión 1.0.3 está publicada:
-<https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.3>.
-Falta instalarla en las sedes. La versión anterior, la 1.0.2, sigue disponible en
+**Estado:** la versión 1.0.4 está compilada y empaquetada, **pendiente de
+publicación**. El tag va a ser `agent-v1.0.4` y el zip es
+`balanza-agent-1.0.4-win-x64.zip` (40,87 MB). La release todavía no existe: hay que
+crearla desde la interfaz web de GitHub (sección 5.1), así que por ahora la URL de
+descarga no responde. La versión 1.0.3 sigue publicada en
+<https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.3> y falta
+instalarla en las sedes. La anterior, la 1.0.2, sigue disponible en
 <https://github.com/sebastian6253116/BalanzaWeb/releases/tag/agent-v1.0.2>.
+
+**Novedad 1.0.4 — el probe deja de inventar el modelo.** Hasta la 1.0.3, cuando la
+respuesta al `hello` no traía texto de modelo, `probe` caía en un valor fijo,
+`RONGTA_PV2.0`, y lo imprimía como si la balanza lo hubiera informado. Las cuatro
+balanzas de DR PORTILLO contestan el saludo con un ACK de 1 byte y ningún modelo, así
+que el dato era inventado y desvió un diagnóstico en la sede. Ahora imprime
+`model: not reported by the scale`, y `docs/protocol.md` §3.1 deja documentado el ACK
+de 1 byte verificado contra ese hardware. El caso está cubierto por pruebas en
+`apps/agent` y en `packages/scale-client`; el resto del salto de tests del proyecto
+corresponde a la API y no viaja en este zip.
 
 **Novedad 1.0.3 — backoff por balanza.** Una balanza que falla ya no se reintenta en
 cada ciclo: espera 60 s, después 120 s, 240 s y así hasta un tope de 15 minutos. El
@@ -31,7 +45,7 @@ mismo qué versión es.
 
 ## 2. Antes de empaquetar
 
-1. Ejecutar los tests y confirmar que pasan los 124:
+1. Ejecutar los tests y confirmar que pasan los 162:
 
    ```powershell
    npm test
@@ -115,7 +129,7 @@ paquete en una carpeta temporal.
 
 ```powershell
 # Versión que se está por publicar
-$v = '1.0.3'
+$v = '1.0.4'
 
 Expand-Archive ".\balanza-agent-$v-win-x64.zip" -DestinationPath .\prueba
 Set-Location ".\prueba\balanza-agent-$v-win-x64"
@@ -132,7 +146,7 @@ Remove-Item Env:BALANZA_AGENT_HOME
 Resultados esperados:
 
 - `version` imprime `balanza-agent <version>`, con la versión de `$v`:
-  `balanza-agent 1.0.3`.
+  `balanza-agent 1.0.4`.
 - `status` imprime la ruta de configuración, la carpeta de logs y, sin
   configuración previa, `no configuration at ...`. Si esa PC ya tiene un agente
   instalado, la variable `BALANZA_AGENT_HOME` evita leer su token.
@@ -142,16 +156,18 @@ máquina tenga Node instalado.
 
 ## 5. Publicar
 
-El tag de release sigue la forma `agent-v<version>`, por ejemplo `agent-v1.0.3`.
+El tag de release sigue la forma `agent-v<version>`, por ejemplo `agent-v1.0.4`.
 El zip se adjunta como asset de esa release. Los comandos de abajo usan `$v` para
 que no queden clavados en una versión vieja.
+
+La 1.0.4 está en este punto: build y zip listos y verificados, release sin crear.
 
 ### 5.1 Desde la interfaz web de GitHub
 
 1. Abrir el repositorio y entrar en **Releases**.
 2. Presionar **Draft a new release**.
 3. En **Choose a tag**, escribir `agent-v<version>` y crear el tag sobre `main`.
-4. Completar el título, por ejemplo `Agente 1.0.3`.
+4. Completar el título, por ejemplo `Agente 1.0.4`.
 5. Adjuntar `apps/agent/dist/balanza-agent-<version>-win-x64.zip`.
 6. Pegar el SHA-256 en la descripción, junto con un resumen de los cambios.
 7. Publicar la release.
@@ -159,7 +175,7 @@ que no queden clavados en una versión vieja.
 ### 5.2 Con `gh` instalado
 
 ```powershell
-$v = '1.0.3'
+$v = '1.0.4'
 $sha = (Get-FileHash "apps\agent\dist\balanza-agent-$v-win-x64.zip").Hash.ToLower()
 
 gh release create "agent-v$v" `
@@ -168,15 +184,15 @@ gh release create "agent-v$v" `
   --notes "SHA-256: $sha"
 ```
 
-`gh` **no está instalado en la máquina actual**, así que hoy el camino disponible
-es el de la interfaz web. El comando queda documentado para cuando se instale y
-autentique la herramienta.
+`gh` **no está instalado en la máquina actual** y no hay un `GITHUB_TOKEN`
+disponible, así que hoy el camino disponible es el de la interfaz web (5.1). El
+comando queda documentado para cuando se instale y autentique la herramienta.
 
 También se puede publicar con la API de GitHub, sin `gh`:
 
 ```powershell
 # Requiere un token con scope repo en la variable GITHUB_TOKEN
-$v = '1.0.3'
+$v = '1.0.4'
 $sha = (Get-FileHash "apps\agent\dist\balanza-agent-$v-win-x64.zip").Hash.ToLower()
 $json = @{ tag_name = "agent-v$v"; target_commitish = 'main'; name = "Agente BalanzaWeb $v"; body = "SHA-256: $sha" } | ConvertTo-Json
 $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/sebastian6253116/BalanzaWeb/releases' `
@@ -198,7 +214,7 @@ el hash local, que es la prueba de que el archivo publicado son exactamente los 
 que se compilaron:
 
 ```powershell
-$v = '1.0.3'
+$v = '1.0.4'
 $r = Invoke-RestMethod "https://api.github.com/repos/sebastian6253116/BalanzaWeb/releases/tags/agent-v$v"
 $r.assets | Select-Object name, size, state, digest
 ```
@@ -207,7 +223,8 @@ $r.assets | Select-Object name, size, state, digest
 
 El hash vive en tres lugares:
 
-- la salida de `npm run agent:package`, línea `sha256:`;
+- la salida de `npm run agent:package`, línea `sha256:` (para la 1.0.4 es el único
+  que ya existe: la release todavía no se publicó);
 - la descripción de la release;
 - el mensaje con el que se entrega el zip a la sede.
 
@@ -216,10 +233,19 @@ versión del ejecutable no prueba integridad: un zip distinto puede contener la
 misma versión. En la PC de la sede, antes de descomprimir:
 
 ```powershell
-Get-FileHash .\balanza-agent-1.0.3-win-x64.zip -Algorithm SHA256
+Get-FileHash .\balanza-agent-1.0.4-win-x64.zip -Algorithm SHA256
 ```
 
-El campo `Hash` tiene que coincidir con el publicado. El SHA-256 de 1.0.3 es:
+El campo `Hash` tiene que coincidir con el valor de referencia, que es el que queda
+anotado en la release. Mientras la 1.0.4 siga pendiente de publicación, el valor de
+referencia es el de este documento. El SHA-256 del zip 1.0.4 ya empaquetado, que es
+el que se va a publicar, es:
+
+```
+65449c82237049cb65ab0a13bd20c51221634476cf3d2601e4a81c5d3511ad34
+```
+
+El de 1.0.3, que sigue publicado y sirve para reinstalar:
 
 ```
 0680e9ff874b041f255c91b078898883b5445a1d0c1ad9c6529d8130490f13dc
@@ -254,7 +280,7 @@ sigue pendiente.
 
 ## 8. Checklist de publicación
 
-- [ ] `npm test` pasa completo (124 tests).
+- [ ] `npm test` pasa completo (162 tests).
 - [ ] `version` está subida en `apps/agent/package.json`.
 - [ ] `npm run agent:smoke` terminó con `RESULT: ALL CHECKS PASSED` en consola elevada.
 - [ ] `npm run agent:build` y `npm run agent:package` generaron el zip.
