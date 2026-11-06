@@ -1,7 +1,7 @@
 # Instalación del agente en una sede
 
 Guía operativa: instalar el agente de BalanzaWeb en la PC de una sede, desde cero
-hasta el servicio corriendo y enrolado. Última actualización: **2026-11-02**.
+hasta el servicio corriendo y enrolado. Última actualización: **2026-11-06**.
 
 ## 1. Qué es y qué instala
 
@@ -585,14 +585,15 @@ del agente.
 ### 11.3 Llevar los días de validez de todo el catálogo a 365
 
 El maestro del fabricante trae 364–366 días en casi todos los artículos. Después de
-importar un maestro así, hay que dejarlos todos en 365. El script lee el catálogo,
-cambia **solo** `validityDays` y vuelve a enviarlo completo; el resto de los campos
-—precios incluidos— queda igual, también los artículos que tienen precio 0 a
-propósito.
+importar un maestro así, hay que dejarlos todos en 365. El script lee el catálogo y
+envía un `PATCH /api/articles/:id` **solo** por cada artículo que necesita el cambio,
+tocando únicamente `validityDays`; el resto de los campos —precios incluidos— queda
+igual, también los artículos que tienen precio 0 a propósito. Nunca toca los maestros
+por sede.
 
 Se ejecuta desde una máquina con Node 22 o superior y acceso al API, no desde la PC
 de la sede. El usuario tiene que tener los permisos `articles.read` (para leer el
-catálogo) y `articles.write` (para reemplazarlo), por ejemplo un administrador.
+catálogo) y `articles.write` (para el `PATCH`), por ejemplo un administrador.
 
 1. Definir la clave en la sesión de PowerShell. Así no queda en el historial:
 
@@ -622,14 +623,54 @@ catálogo) y `articles.write` (para reemplazarlo), por ejemplo un administrador.
 
 4. Publicar el catálogo a la sede desde la web para que las balanzas reciban los días
    nuevos. El script solo cambia el dato maestro: no publica ni empuja a las balanzas.
+   Cada `PATCH` mueve el `updated_at` de su artículo, así que al terminar **todas las
+   sedes** quedan marcadas con `generalAhead` hasta que se sincronicen o se publiquen.
+   Los maestros por sede nunca se tocan: no se pierde ningún precio propio.
 
 Antes de enviar, el script vuelve a leer el catálogo y compara la firma (cantidad de
 artículos, códigos de barra y precios) con la del inicio. Si alguien lo modificó
 mientras corría, aborta sin enviar nada y hay que ejecutarlo de nuevo.
 
+Una ejecución puede detenerse a mitad de camino si un `PATCH` falla: en ese caso el
+catálogo queda parcialmente actualizado, volver a ejecutar el script es seguro porque
+es idempotente (solo cambia los artículos que todavía no tienen 365 días) y no hay que
+publicar hasta que termine sin errores.
+
 El destino se puede cambiar con `--days <n>`; el valor por defecto es 365 y solo se
 aceptan enteros positivos. Cada pedido tiene un tiempo de espera de 30 s, ajustable
 con `--timeout <ms>`.
+
+### 11.4 Cambiar un precio para una sola sede
+
+Cada sede tiene su propio maestro de artículos, copiado del general. Sirve para que una
+sede venda a un precio distinto sin tocar al resto.
+
+1. En **Artículos**, elegir la sede en el selector **Maestro**. Arriba aparece el aviso
+   de que lo que se edite ahí se publica sólo a las balanzas de esa sede.
+2. Editar el artículo y guardar. El cambio queda en el maestro de esa sede; el general
+   no se modifica.
+3. Ir a **Publicar**, marcar esa sede y publicar. La revisión se arma con el maestro de
+   la sede, no con el general.
+
+Cuando algún dato de un artículo de la sede difiere del general —el precio, pero también
+el nombre, el código o la validez—, al lado del precio aparece un icono de aviso (`!`).
+Al pasar el mouse —o al tocarlo en el celular— muestra **Precio en el maestro general** y
+**Acá**, y aclara si además difiere otro dato, para comparar sin cambiar de maestro.
+
+Si se editó el maestro general y esa sede todavía no lo recibió, en **Publicar** la
+sede muestra "El maestro general cambió en N artículos" con la casilla **Sincronizar
+antes de publicar**, marcada por defecto. Con la casilla marcada se copia primero el
+general sobre el maestro de la sede y después se publica; si se destilda, se publica el
+maestro propio de la sede tal como está.
+
+Los artículos nuevos se crean sólo en el maestro general y se copian a todas las
+sedes; por eso, con una sede seleccionada, no aparecen **Nuevo artículo** ni la opción
+de borrar. Borrar en el general borra el artículo de todas las sedes.
+
+> **Sincronizar es destructivo.** El botón **Sincronizar con el maestro general**
+> reemplaza **todo** el maestro de esa sede con el del general: se pierden los precios
+> y demás valores propios, se agregan los artículos nuevos y se quitan los que ya no
+> existen. Pide confirmación y avisa cuántos precios distintos se van a perder.
 
 ## 12. Actualizar el agente a una versión nueva
 

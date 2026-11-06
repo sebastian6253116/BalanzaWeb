@@ -289,6 +289,41 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .mini-menu button.danger { color: var(--danger); }
 .mini-menu button.danger:hover:not(:disabled) { background: #fdecea; }
 
+/* ---------- per-sede price warning ---------- */
+.price-cell { display: inline-flex; align-items: center; gap: 6px; }
+.price-flag {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1px solid #f0d9ae;
+  background: #fdf3e2;
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.price-flag:hover:not(:disabled) { background: #fbe8c8; border-color: #e6c78c; }
+.price-flag-pop {
+  position: fixed;
+  z-index: 60;
+  width: 240px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(16, 32, 46, 0.2);
+  padding: 10px 12px;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--ink);
+  text-align: left;
+  white-space: normal;
+}
+
 /* ---------- pagination ---------- */
 .pagination {
   display: flex;

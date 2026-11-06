@@ -2,6 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, download, money } from '../api.js';
 
 const PAGE_SIZES = [10, 30, 50, 100];
+const SCOPE_GENERAL = 'general';
+
+/** Mirrors the server's sede slug so the fallback export name matches its content-disposition. */
+const slugify = (value) =>
+  String(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 
 const emptyForm = {
   name: '',
@@ -19,9 +29,12 @@ const emptyForm = {
 export default function Articles({ user }) {
   const canRead = user.permissions.includes('articles.read');
   const canWrite = user.permissions.includes('articles.write');
+  const canReadSedes = user.permissions.includes('sedes.read');
 
   const [articles, setArticles] = useState([]);
   const [meta, setMeta] = useState({ units: [], packageTypes: [] });
+  const [sedes, setSedes] = useState([]);
+  const [scope, setScope] = useState(SCOPE_GENERAL);
   const [query, setQuery] = useState('');
   const [term, setTerm] = useState('');
   const [page, setPage] = useState(1);
@@ -35,17 +48,77 @@ export default function Articles({ user }) {
   const [notice, setNotice] = useState(null);
   const [menu, setMenu] = useState(null);
   const [searching, setSearching] = useState(false);
+  const [priceFlag, setPriceFlag] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [loading, setLoading] = useState(true);
   const firstRun = useRef(true);
+  // Latest scope the operator selected. Responses are applied only while this
+  // still matches: an older master's rows must never be painted under the new
+  // scope label, or editing one would PATCH the wrong master's values.
+  const scopeRef = useRef(SCOPE_GENERAL);
 
-  async function load() {
-    const [catalogData, metaData] = await Promise.all([api('/articles'), api('/units')]);
-    setArticles(catalogData.articles);
-    setMeta(metaData);
+  const isSede = scope !== SCOPE_GENERAL;
+  const selectedSede = isSede ? sedes.find((sede) => sede.id === scope) ?? null : null;
+  const interactionsBlocked = syncing || loading;
+
+  async function loadSedes(keepScope = scope) {
+    const data = await api('/sedes');
+    const list = data.sedes ?? [];
+    setSedes(list);
+    // The sede could have been deleted from another tab while it was selected.
+    if (keepScope !== SCOPE_GENERAL && !list.some((sede) => sede.id === keepScope)) {
+      scopeRef.current = SCOPE_GENERAL;
+      setScope(SCOPE_GENERAL);
+    }
+    return list;
+  }
+
+  async function loadArticles(scopeValue = scopeRef.current) {
+    const data = await api(
+      scopeValue === SCOPE_GENERAL ? '/articles' : `/articles?sedeId=${scopeValue}`,
+    );
+    // The scope may have moved while the request was in flight. Applying a
+    // stale response here is exactly the race that paints one master's rows
+    // under another master's label.
+    if (scopeRef.current !== scopeValue) return;
+    setArticles(data.articles ?? []);
   }
 
   useEffect(() => {
-    load().catch((err) => setError(err.message));
+    api('/units').then(setMeta).catch((err) => setError(err.message));
+    // Without sedes.read (or if the request fails) the page stays on the general scope.
+    if (!canReadSedes) return;
+    loadSedes().catch(() => setSedes([]));
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Mirror the selected scope synchronously so any in-flight response from
+    // the previous scope is discarded by its own comparison.
+    scopeRef.current = scope;
+    // Drop the previous scope's rows immediately: they belong to another master
+    // and, if this fetch fails, they must never stay interactive under the new one.
+    setLoading(true);
+    setArticles([]);
+    setMenu(null);
+    setPriceFlag(null);
+    api(scope === SCOPE_GENERAL ? '/articles' : `/articles?sedeId=${scope}`)
+      .then((data) => {
+        if (!cancelled && scopeRef.current === scope) setArticles(data.articles ?? []);
+      })
+      .catch((err) => {
+        if (!cancelled && scopeRef.current === scope) {
+          setArticles([]);
+          setError(err.message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled && scopeRef.current === scope) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scope]);
 
   // Progressive search: the term settles while typing, so the table never jumps.
   // The spinner covers the settle window instead of flashing an instant no-op.
@@ -76,6 +149,20 @@ export default function Articles({ user }) {
     };
   }, [menu]);
 
+  // Same dismissal pattern as the row menu: only one price popover can be open.
+  useEffect(() => {
+    if (!priceFlag) return;
+    const close = () => setPriceFlag(null);
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [priceFlag]);
+
   const unitLabel = (code) => meta.units.find((unit) => unit.code === code)?.label ?? `código ${code}`;
 
   const filtered = useMemo(() => {
@@ -103,11 +190,13 @@ export default function Articles({ user }) {
     const pad = (value) => String(value).padStart(2, '0');
     const stamp = `${today.getFullYear()}${pad(today.getMonth() + 1)}${pad(today.getDate())}`;
     const label = format === 'xlsx' ? 'Excel' : format === 'txp' ? '.Txp' : 'fabricante';
+    const suffix = scope === SCOPE_GENERAL ? '' : `-${slugify(selectedSede?.name ?? '')}`;
     const filename = format === 'vendor'
-      ? `maestro-balanza-${stamp}-fabricante.xlsx`
-      : `maestro-balanza-${stamp}.${format}`;
+      ? `maestro-balanza-${stamp}-fabricante${suffix}.xlsx`
+      : `maestro-balanza-${stamp}${suffix}.${format}`;
+    const scopeQuery = scope === SCOPE_GENERAL ? '' : `&sedeId=${scope}`;
     try {
-      await download(`/articles/export?format=${format}`, filename);
+      await download(`/articles/export?format=${format}${scopeQuery}`, filename);
     } catch (err) {
       setError(`No se pudo exportar el maestro en ${label}: ${err.message}`);
     } finally {
@@ -115,7 +204,93 @@ export default function Articles({ user }) {
     }
   }
 
+  function changeScope(value) {
+    const next = value === SCOPE_GENERAL ? SCOPE_GENERAL : Number(value);
+    // Update the guard before React re-renders: a response that lands between
+    // this click and the fetch effect belongs to the previous scope.
+    scopeRef.current = next;
+    setScope(next);
+    // Clear synchronously so the previous master is never painted under the new
+    // scope between this render and the fetch effect.
+    setArticles([]);
+    setLoading(true);
+    setPage(1);
+    setMenu(null);
+    setPriceFlag(null);
+    // Close the editor: its form belongs to the scope that was open when it started.
+    setEditing(null);
+    setError(null);
+    setNotice(null);
+    // Refresh the sede list so `articlesAhead` reflects the latest general master.
+    if (next !== SCOPE_GENERAL && canReadSedes) loadSedes(next).catch(() => {});
+  }
+
+  async function syncSede() {
+    if (!isSede || !selectedSede) return;
+    // Reload before confirming: the count shown to the operator is the one the
+    // API verifies, so a stale list can never understate what gets destroyed.
+    let freshSedes;
+    try {
+      freshSedes = await loadSedes();
+    } catch (err) {
+      setError(`No se pudo refrescar la lista de sedes: ${err.message}`);
+      return;
+    }
+    const current = freshSedes.find((sede) => sede.id === scope);
+    if (!current) {
+      setError('La sede seleccionada ya no existe.');
+      return;
+    }
+    // `overrides` is how many articles differ from the general master, whether the
+    // operator typed them here or the general moved after the last sync.
+    const overrides = Number(current.overrides) || 0;
+    const confirmation = [
+      `¿Sincronizar el maestro de ${current.name} con el maestro general?`,
+      '',
+      'Se sobrescribe TODO el maestro de la sede con el del general.',
+      overrides > 0
+        ? `Se van a reemplazar ${overrides} artículo${overrides === 1 ? '' : 's'} con valores distintos al maestro general.`
+        : 'Esta sede no tiene artículos con valores distintos al maestro general; la sincronización solo aplica los cambios del general.',
+      '',
+      'Los artículos nuevos del general se agregan y los que ya no existen se quitan.',
+    ].join('\n');
+    if (!window.confirm(confirmation)) return;
+
+    setSyncing(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await api(`/sedes/${scope}/articles/sync`, {
+        method: 'POST',
+        body: { expectedOverrides: overrides },
+      });
+      setNotice(
+        `Maestro sincronizado: ${result.articles} artículos, ${result.priceChanges} precios actualizados.`,
+      );
+      await Promise.all([loadArticles(scopeRef.current), loadSedes()]);
+    } catch (err) {
+      // A 409 means the override count moved while the operator was confirming:
+      // show the API's message and refresh the list so the next attempt is honest.
+      setError(err.message);
+      if (err.status === 409) loadSedes().catch(() => {});
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  function openPriceFlag(event, article) {
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const width = 240;
+    setPriceFlag({
+      id: article.id,
+      x: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
+      y: rect.bottom + 8,
+    });
+  }
+
   async function startCreate() {
+    if (interactionsBlocked) return;
     setError(null);
     setErrors([]);
     setNotice(null);
@@ -134,6 +309,7 @@ export default function Articles({ user }) {
   }
 
   function startEdit(article) {
+    if (interactionsBlocked) return;
     setMenu(null);
     setError(null);
     setErrors([]);
@@ -155,6 +331,7 @@ export default function Articles({ user }) {
 
   async function submit(event) {
     event.preventDefault();
+    if (interactionsBlocked) return;
     setBusy(true);
     setError(null);
     setErrors([]);
@@ -171,15 +348,25 @@ export default function Articles({ user }) {
       barcodeType: Number(form.barcodeType) || 7,
     };
     try {
-      if (editing === 'new') await api('/articles', { method: 'POST', body: payload });
-      else await api(`/articles/${editing.id}`, { method: 'PATCH', body: payload });
+      if (editing === 'new') {
+        // Creating only exists in the general master; the API rejects sedeId here.
+        await api('/articles', { method: 'POST', body: payload });
+      } else {
+        // In sede scope the edit lands on that sede's copy of the article.
+        const path = scope === SCOPE_GENERAL
+          ? `/articles/${editing.id}`
+          : `/articles/${editing.id}?sedeId=${scope}`;
+        await api(path, { method: 'PATCH', body: payload });
+      }
       setEditing(null);
       setNotice(
         editing === 'new'
           ? 'Artículo creado. Queda pendiente de publicar a las sedes.'
-          : 'Artículo actualizado. Queda pendiente de publicar.',
+          : scope === SCOPE_GENERAL
+            ? 'Artículo actualizado. Queda pendiente de publicar.'
+            : 'Artículo actualizado en esta sede. Queda pendiente de publicar.',
       );
-      await load();
+      await loadArticles();
     } catch (err) {
       setError(err.message);
       setErrors(err.details?.validation?.errors ?? []);
@@ -190,11 +377,13 @@ export default function Articles({ user }) {
 
   async function remove(article) {
     setMenu(null);
+    // Deleting is a general-master operation only; the action is hidden in sede scope.
+    if (scope !== SCOPE_GENERAL || interactionsBlocked) return;
     if (!window.confirm(`¿Eliminar "${article.name}" (código ${article.barcode})?`)) return;
     try {
       await api(`/articles/${article.id}`, { method: 'DELETE' });
       setNotice('Artículo eliminado. Queda pendiente de publicar.');
-      await load();
+      await loadArticles();
     } catch (err) {
       setError(err.message);
     }
@@ -210,8 +399,56 @@ export default function Articles({ user }) {
     <section>
       <h2>Maestro de artículos</h2>
       <div className="sub">
-        {articles.length} artículos · los cambios no llegan a la balanza hasta publicarlos
+        {loading
+          ? 'Cargando maestro…'
+          : isSede
+            ? `${articles.length} artículos en esta sede · los cambios no llegan a la balanza hasta publicarlos`
+            : `${articles.length} artículos · los cambios no llegan a la balanza hasta publicarlos`}
       </div>
+
+      {sedes.length > 0 && (
+        <div className="panel">
+          <div className="row">
+            <div style={{ flex: '1 1 260px' }}>
+              <label htmlFor="scope">Maestro</label>
+              <select
+                id="scope"
+                value={scope}
+                disabled={interactionsBlocked}
+                onChange={(event) => changeScope(event.target.value)}
+              >
+                <option value={SCOPE_GENERAL}>Maestro general</option>
+                {sedes.map((sede) => (
+                  <option key={sede.id} value={sede.id}>
+                    {sede.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {isSede && canWrite && (
+              <div className="tight">
+                <button type="button" className="ghost" onClick={syncSede} disabled={interactionsBlocked}>
+                  {syncing ? 'Sincronizando…' : 'Sincronizar con el maestro general'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {isSede && selectedSede && (
+        <div className="alert info">
+          Maestro de {selectedSede.name}. Los precios y datos que edites acá solo se publican a las
+          balanzas de esta sede.
+          {selectedSede.articlesAhead > 0 && (
+            <>
+              <br />
+              El maestro general cambió en {selectedSede.articlesAhead} artículos desde la última
+              sincronización.
+            </>
+          )}
+        </div>
+      )}
 
       {notice && <div className="alert info">{notice}</div>}
       {error && <div className="alert error">{error}</div>}
@@ -248,10 +485,15 @@ export default function Articles({ user }) {
                   </button>
                 </>
               )}
-              {canWrite && <button onClick={startCreate}>Nuevo artículo</button>}
+              {canWrite && !isSede && <button onClick={startCreate} disabled={interactionsBlocked}>Nuevo artículo</button>}
             </div>
           )}
         </div>
+        {canWrite && isSede && (
+          <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+            Los artículos nuevos se crean en el maestro general y se copian a todas las sedes.
+          </div>
+        )}
       </div>
 
       <div className="panel" style={{ padding: 0 }}>
@@ -269,13 +511,84 @@ export default function Articles({ user }) {
               {canWrite && <th className="actions-col" />}
             </tr>
           </thead>
-          <tbody className={searching ? 'is-loading' : ''}>
-            {visible.map((article) => (
+          <tbody className={loading || searching ? 'is-loading' : ''}>
+            {loading && (
+              <tr>
+                <td colSpan={canWrite ? 9 : 8} className="muted">
+                  Cargando maestro…
+                </td>
+              </tr>
+            )}
+            {!loading && visible.map((article) => (
               <tr key={article.id}>
                 <td className="num mono">{article.barcode}</td>
                 <td>{article.name}</td>
                 <td className="num hide-sm">{article.lfCode}</td>
-                <td className="num">{money(article.priceCents)}</td>
+                <td className="num">
+                  <span className="price-cell">
+                    {money(article.priceCents)}
+                    {isSede && article.differsFromGeneral === true && (
+                        <>
+                          <button
+                            type="button"
+                            className="price-flag"
+                            aria-label="Difiere del maestro general"
+                            aria-describedby={
+                              priceFlag?.id === article.id ? `price-flag-${article.id}` : undefined
+                            }
+                            onClick={(event) => {
+                              if (priceFlag?.id === article.id) {
+                                event.stopPropagation();
+                                setPriceFlag(null);
+                                return;
+                              }
+                              openPriceFlag(event, article);
+                            }}
+                            onPointerEnter={(event) => {
+                              if (event.pointerType !== 'touch' && priceFlag?.id !== article.id) {
+                                openPriceFlag(event, article);
+                              }
+                            }}
+                            onPointerLeave={(event) => {
+                              if (event.pointerType === 'touch') return;
+                              const next = event.relatedTarget;
+                              if (next instanceof Node && next.closest?.('.price-flag-pop')) return;
+                              setPriceFlag((current) =>
+                                current?.id === article.id ? null : current,
+                              );
+                            }}
+                          >
+                            <span aria-hidden="true">!</span>
+                          </button>
+                          {priceFlag?.id === article.id && (
+                            <span
+                              role="tooltip"
+                              id={`price-flag-${article.id}`}
+                              className="price-flag-pop"
+                              style={{ left: priceFlag.x, top: priceFlag.y }}
+                            >
+                              {Number.isFinite(article.generalPriceCents) ? (
+                                <>
+                                  Precio en el maestro general:{' '}
+                                  <strong>{money(article.generalPriceCents)}</strong>
+                                  <br />
+                                  Acá: <strong>{money(article.priceCents)}</strong>
+                                  {article.generalPriceCents === article.priceCents && (
+                                    <>
+                                      <br />
+                                      Otros datos difieren del maestro general.
+                                    </>
+                                  )}
+                                </>
+                              ) : (
+                                <>Este artículo no está en el maestro general.</>
+                              )}
+                            </span>
+                          )}
+                        </>
+                      )}
+                  </span>
+                </td>
                 <td>{unitLabel(article.unitCode)}</td>
                 <td className="num hide-sm">{article.department}</td>
                 <td className="num hide-sm">{article.validityDays}</td>
@@ -283,15 +596,17 @@ export default function Articles({ user }) {
                 {canWrite && (
                   <td className="actions-col">
                     <div className="desk-actions">
-                      <button className="btn-sm" onClick={() => startEdit(article)}>
+                      <button className="btn-sm" onClick={() => startEdit(article)} disabled={interactionsBlocked}>
                         Editar
                       </button>
-                      <button className="btn-sm danger" onClick={() => remove(article)}>
-                        Eliminar
-                      </button>
+                      {!isSede && (
+                        <button className="btn-sm danger" onClick={() => remove(article)} disabled={interactionsBlocked}>
+                          Eliminar
+                        </button>
+                      )}
                     </div>
                     <div className="mob-actions">
-                      <button className="btn-sm" onClick={(event) => openMenu(event, article)}>
+                      <button className="btn-sm" onClick={(event) => openMenu(event, article)} disabled={interactionsBlocked}>
                         Acción ▾
                       </button>
                     </div>
@@ -299,10 +614,16 @@ export default function Articles({ user }) {
                 )}
               </tr>
             ))}
-            {visible.length === 0 && (
+            {!loading && visible.length === 0 && (
               <tr>
                 <td colSpan={canWrite ? 9 : 8} className="muted">
-                  {term ? `Sin resultados para "${query}".` : 'Todavía no hay artículos.'}
+                  {error
+                    ? 'No se pudo cargar el maestro. Revisá el error de arriba.'
+                    : term
+                      ? `Sin resultados para "${query}".`
+                      : isSede
+                        ? 'Esta sede no tiene artículos cargados.'
+                        : 'Todavía no hay artículos.'}
                 </td>
               </tr>
             )}
@@ -372,10 +693,12 @@ export default function Articles({ user }) {
 
       {menu && (
         <div className="mini-menu" style={{ left: menu.x, top: menu.y }} onClick={(event) => event.stopPropagation()}>
-          <button onClick={() => startEdit(menu.article)}>Editar</button>
-          <button className="danger" onClick={() => remove(menu.article)}>
-            Eliminar
-          </button>
+          <button onClick={() => startEdit(menu.article)} disabled={interactionsBlocked}>Editar</button>
+          {!isSede && (
+            <button className="danger" onClick={() => remove(menu.article)} disabled={interactionsBlocked}>
+              Eliminar
+            </button>
+          )}
         </div>
       )}
 
@@ -509,7 +832,7 @@ export default function Articles({ user }) {
               <button type="button" className="ghost" onClick={() => setEditing(null)}>
                 Cancelar
               </button>
-              <button type="submit" disabled={busy}>
+              <button type="submit" disabled={busy || syncing}>
                 {busy ? 'Guardando…' : 'Guardar'}
               </button>
             </div>

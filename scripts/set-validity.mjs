@@ -3,9 +3,9 @@
  * Set every article's validity to the same number of days.
  *
  * The article master is production data, not code: this maintenance script reads
- * the catalogue from the API, rewrites only `validityDays` and sends the whole
- * catalogue back with PUT /api/articles. Every other field is preserved
- * untouched, including prices and the articles that intentionally cost 0.
+ * the catalogue from the API and PATCHes only the articles whose `validityDays`
+ * differs. Every other field (prices, names, per-sede masters, zero-priced
+ * articles) is left untouched because the request never sends it.
  *
  * Usage:
  *   $env:BALANZA_PASSWORD = "..."
@@ -15,37 +15,28 @@
  * `--password` (visible in the process list and the shell history).
  *
  * Requires a user with the `articles.read` permission (GET) and the
- * `articles.write` permission (PUT).
+ * `articles.write` permission (PATCH).
  */
 import { pathToFileURL } from 'node:url';
 
 const DEFAULT_DAYS = 365;
 const DEFAULT_TIMEOUT_MS = 30000;
+const PROGRESS_EVERY = 25;
 
 /**
- * Build the PUT /api/articles body. Only `validityDays` changes; every other
- * field is copied as-is so prices and zero-priced articles survive untouched.
+ * Articles whose validity differs from the target. Pure so the selection can be
+ * tested without a server. Returns the original objects, never copies.
  */
-export function buildCatalogPayload(articles, days) {
-  return articles.map((article) => ({
-    name: article.name,
-    lfCode: article.lfCode,
-    pluNumber: article.pluNumber ?? 0,
-    barcode: article.barcode,
-    barcodeType: article.barcodeType ?? 7,
-    priceCents: article.priceCents,
-    unitCode: article.unitCode,
-    department: article.department,
-    validityDays: days,
-    packageType: article.packageType ?? 0,
-  }));
+export function articlesNeedingUpdate(articles, days) {
+  return articles.filter((article) => article.validityDays !== days);
 }
 
 /**
- * Stable snapshot of every field the script round-trips: name, lfCode,
- * pluNumber, barcode, barcodeType, priceCents, unitCode, department,
+ * Stable snapshot of every field the catalogue exposes to this script: name,
+ * lfCode, pluNumber, barcode, barcodeType, priceCents, unitCode, department,
  * validityDays and packageType. Used to detect concurrent edits between reading
- * and replacing the whole catalogue; a change in any of them aborts the PUT.
+ * the catalogue and sending the PATCHes; a change in any of them aborts the run
+ * instead of racing the operator.
  */
 export function catalogueSignature(articles) {
   return JSON.stringify(
@@ -138,7 +129,7 @@ async function main() {
   const articles = catalog.body?.articles;
   if (!Array.isArray(articles)) throw new Error('the API did not return an articles array');
 
-  const changed = articles.filter((article) => article.validityDays !== days);
+  const changed = articlesNeedingUpdate(articles, days);
   const already = articles.length - changed.length;
   const summary = (label, value) => console.log(`${label.padEnd(19)}${value}`);
 
@@ -154,38 +145,53 @@ async function main() {
     return;
   }
 
-  // A same-content PUT would delete and reinsert every row for nothing, churning
-  // `updated_at` across the whole catalogue.
   if (changed.length === 0) {
     console.log(`nothing to do: every article already has ${days} days`);
     return;
   }
 
-  // PUT replaces the whole catalogue: abort if someone edited it while this
-  // script was running instead of overwriting their work.
+  // PATCH targets individual rows, but a concurrent catalogue edit would still
+  // race this run. Re-read once and abort before the first write if anything
+  // changed since the initial read.
   const snapshot = catalogueSignature(articles);
-  const beforePut = await request(`${baseUrl}/api/articles`, { token, timeoutMs });
-  if (!beforePut.ok) throw new Error(apiError(beforePut, `re-reading articles failed: HTTP ${beforePut.status}`));
-  const currentArticles = beforePut.body?.articles;
+  const beforeWrite = await request(`${baseUrl}/api/articles`, { token, timeoutMs });
+  if (!beforeWrite.ok) throw new Error(apiError(beforeWrite, `re-reading articles failed: HTTP ${beforeWrite.status}`));
+  const currentArticles = beforeWrite.body?.articles;
   if (!Array.isArray(currentArticles)) throw new Error('the API did not return an articles array');
   if (catalogueSignature(currentArticles) !== snapshot) {
     throw new Error('the catalogue changed while this script was running; nothing was sent — run it again');
   }
 
-  const payload = buildCatalogPayload(articles, days);
-  const update = await request(`${baseUrl}/api/articles`, {
-    method: 'PUT',
-    token,
-    timeoutMs,
-    body: { articles: payload },
-  });
-  if (!update.ok) throw new Error(apiError(update, `updating articles failed: HTTP ${update.status}`));
-  if (typeof update.body?.articles === 'number' && update.body.articles !== payload.length) {
-    throw new Error(`the API reported ${update.body.articles} articles after the update but ${payload.length} were sent`);
+  let lastStatus = null;
+  for (let index = 0; index < changed.length; index += 1) {
+    const article = changed[index];
+    if (article.id === undefined || article.id === null) {
+      throw new Error(`article ${article.barcode} has no id; cannot PATCH it`);
+    }
+    const update = await request(`${baseUrl}/api/articles/${article.id}`, {
+      method: 'PATCH',
+      token,
+      timeoutMs,
+      body: { validityDays: days },
+    });
+    if (!update.ok) {
+      throw new Error(
+        `${apiError(update, `updating article ${article.barcode} failed: HTTP ${update.status}`)} `
+          + `(stopped after ${index} of ${changed.length} articles). `
+          + 'The catalogue may be partially updated: do not publish before re-running this script, '
+          + 'or the mix of old and new validity days would be pushed to the scales.',
+      );
+    }
+    lastStatus = update.status;
+
+    const done = index + 1;
+    if (done % PROGRESS_EVERY === 0 || done === changed.length) {
+      console.log(`  updated ${done}/${changed.length}`);
+    }
   }
 
   summary('articles changed:', changed.length);
-  summary('HTTP status:', update.status);
+  summary('HTTP status:', lastStatus);
 }
 
 const invokedDirectly = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;

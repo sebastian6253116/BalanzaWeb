@@ -56,6 +56,33 @@ CREATE TABLE IF NOT EXISTS articles (
   updated_at TEXT NOT NULL
 );
 
+-- Per-sede article master: a materialized copy of the global catalogue.
+-- Every sede holds the same set of article ids; only the values may differ.
+-- The global `active` flag is not copied: deactivation stays a global concern.
+CREATE TABLE IF NOT EXISTS sede_articles (
+  sede_id INTEGER NOT NULL REFERENCES sedes(id) ON DELETE CASCADE,
+  article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+  barcode INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  lf_code INTEGER NOT NULL,
+  plu_number INTEGER NOT NULL DEFAULT 0,
+  price_cents INTEGER NOT NULL,
+  unit_code INTEGER NOT NULL,
+  department INTEGER NOT NULL,
+  validity_days INTEGER NOT NULL,
+  package_type INTEGER NOT NULL DEFAULT 0,
+  barcode_type INTEGER NOT NULL DEFAULT 7,
+  updated_at TEXT NOT NULL,
+  -- updated_at of the general article this copy was last synced from.
+  -- Comparing it with `articles.updated_at` tells whether the general master
+  -- moved ahead; comparing it with `updated_at` tells whether the sede copy
+  -- was overridden. Keeping both signals independent needs its own column.
+  base_updated_at TEXT NOT NULL,
+  PRIMARY KEY (sede_id, article_id),
+  UNIQUE (sede_id, barcode),
+  UNIQUE (sede_id, lf_code)
+);
+
 CREATE TABLE IF NOT EXISTS deployments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   sede_id INTEGER NOT NULL REFERENCES sedes(id) ON DELETE CASCADE,

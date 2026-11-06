@@ -20,6 +20,25 @@ export function openDatabase(path = ':memory:') {
   if (path !== ':memory:') db.exec('PRAGMA journal_mode = WAL');
   db.exec(readFileSync(join(here, 'schema.sql'), 'utf8'));
 
+  // Stores created before per-sede provenance lack `base_updated_at`.
+  // SQLite cannot add a NOT NULL column without a default, so add it empty and
+  // seed it from `updated_at`: at this point no pending general change can be
+  // told apart from a sede edit, and "nothing ahead" is the safe assumption.
+  const sedeColumns = db.prepare('PRAGMA table_info(sede_articles)').all();
+  if (!sedeColumns.some((column) => column.name === 'base_updated_at')) {
+    // One transaction: a failure between the ALTER and the UPDATE must not leave
+    // rows with an empty `base_updated_at` behind.
+    db.exec('BEGIN');
+    try {
+      db.exec("ALTER TABLE sede_articles ADD COLUMN base_updated_at TEXT NOT NULL DEFAULT ''");
+      db.exec('UPDATE sede_articles SET base_updated_at = updated_at');
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
   const handle = {
     raw: db,
     exec: (sql) => db.exec(sql),

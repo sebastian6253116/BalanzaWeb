@@ -29,6 +29,18 @@ const MAX_BODY_BYTES = 5 * 1024 * 1024;
 
 const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
+/** Article fields compared between a sede copy (snake_case) and the general row. */
+const SEDE_ARTICLE_FIELDS = [
+  'barcode', 'name', 'lf_code', 'plu_number', 'price_cents', 'unit_code',
+  'department', 'validity_days', 'package_type', 'barcode_type',
+];
+
+/** The same ten fields in the camelCase shape the API returns. */
+const SEDE_ARTICLE_CAMEL_FIELDS = [
+  'barcode', 'name', 'lfCode', 'pluNumber', 'priceCents', 'unitCode',
+  'department', 'validityDays', 'packageType', 'barcodeType',
+];
+
 const ARTICLE_EXPORT_COLUMNS = [
   { header: 'Teclado', key: 'pluNumber', width: 10, type: 'integer' },
   { header: 'Nombre', key: 'name', width: 42 },
@@ -288,22 +300,30 @@ export function createApp({
     return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
   }
 
+  /** Global article row -> the camelCase shape the API and the export builders share. */
+  function toCamel(row) {
+    return {
+      id: row.id,
+      barcode: row.barcode,
+      name: row.name,
+      lfCode: row.lf_code,
+      pluNumber: row.plu_number,
+      priceCents: row.price_cents,
+      unitCode: row.unit_code,
+      department: row.department,
+      validityDays: row.validity_days,
+      packageType: row.package_type,
+      barcodeType: row.barcode_type,
+    };
+  }
+
   function activeArticles() {
-    return db
-      .all('SELECT * FROM articles WHERE active = 1 ORDER BY lf_code')
-      .map((row) => ({
-        id: row.id,
-        barcode: row.barcode,
-        name: row.name,
-        lfCode: row.lf_code,
-        pluNumber: row.plu_number,
-        priceCents: row.price_cents,
-        unitCode: row.unit_code,
-        department: row.department,
-        validityDays: row.validity_days,
-        packageType: row.package_type,
-        barcodeType: row.barcode_type,
-      }));
+    return db.all('SELECT * FROM articles WHERE active = 1 ORDER BY lf_code').map(toCamel);
+  }
+
+  /** Active general rows with their raw snake_case columns (timestamps included). */
+  function activeArticleRows() {
+    return db.all('SELECT * FROM articles WHERE active = 1 ORDER BY lf_code');
   }
 
   function catalogState() {
@@ -311,15 +331,196 @@ export function createApp({
     return { articles, hash: catalogHash(articles) };
   }
 
-  /** How many sedes are behind the current catalogue (i.e. have unpublished changes). */
+  /**
+   * A sede's own master. The join keeps the global `active` flag authoritative:
+   * deleting or deactivating an article only happens in the general master.
+   */
+  function sedeArticles(sedeId) {
+    return db
+      .all(
+        `SELECT se.* FROM sede_articles se
+           JOIN articles a ON a.id = se.article_id
+          WHERE se.sede_id = ? AND a.active = 1
+          ORDER BY se.lf_code`,
+        sedeId,
+      )
+      .map((row) => toCamel({ ...row, id: row.article_id }));
+  }
+
+  function sedeCatalogState(sedeId) {
+    const articles = sedeArticles(sedeId);
+    return { articles, hash: catalogHash(articles) };
+  }
+
+  /** Global articles keyed by id, used to compute the per-sede price difference. */
+  function generalArticlesById() {
+    const byId = new Map();
+    for (const article of activeArticles()) byId.set(article.id, article);
+    return byId;
+  }
+
+  /** Insert one copy of a general article into a sede master. */
+  function insertSedeArticle(sedeId, article, updatedAt, baseUpdatedAt) {
+    db.run(
+      `INSERT INTO sede_articles (sede_id, article_id, barcode, name, lf_code, plu_number,
+         price_cents, unit_code, department, validity_days, package_type, barcode_type,
+         updated_at, base_updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      sedeId, article.id, article.barcode, article.name, article.lfCode, article.pluNumber,
+      article.priceCents, article.unitCode, article.department, article.validityDays,
+      article.packageType, article.barcodeType, updatedAt, baseUpdatedAt,
+    );
+  }
+
+  /**
+   * Overwrite one existing sede row with a per-sede edit. `base_updated_at`
+   * stays untouched, so a pending general change keeps being visible after an
+   * unrelated sede edit.
+   */
+  function updateSedeArticle(sedeId, article, updatedAt) {
+    db.run(
+      `UPDATE sede_articles SET barcode = ?, name = ?, lf_code = ?, plu_number = ?, price_cents = ?,
+         unit_code = ?, department = ?, validity_days = ?, package_type = ?, barcode_type = ?,
+         updated_at = ?
+       WHERE sede_id = ? AND article_id = ?`,
+      article.barcode, article.name, article.lfCode, article.pluNumber, article.priceCents,
+      article.unitCode, article.department, article.validityDays, article.packageType,
+      article.barcodeType, updatedAt, sedeId, article.id,
+    );
+  }
+
+  /**
+   * Replace one sede master with the active general catalogue.
+   *
+   * The whole master is deleted and re-inserted: updating row by row would hit a
+   * transient UNIQUE (sede_id, barcode) / (sede_id, lf_code) violation as soon
+   * as two barcodes swap or shift. `transaction: false` lets a caller reuse its
+   * own transaction.
+   */
+  function syncSedeFromGeneral(sedeId, { transaction = true } = {}) {
+    const run = () => {
+      const general = activeArticleRows();
+      const existing = db.all('SELECT * FROM sede_articles WHERE sede_id = ?', sedeId);
+      const byArticle = new Map(existing.map((row) => [row.article_id, row]));
+      const generalIds = new Set(general.map((row) => row.id));
+
+      let created = 0;
+      let updated = 0;
+      let priceChanges = 0;
+      let valueChanges = 0;
+      for (const row of general) {
+        const current = byArticle.get(row.id);
+        if (!current) {
+          created += 1;
+          continue;
+        }
+        updated += 1;
+        if (current.price_cents !== row.price_cents) priceChanges += 1;
+        if (SEDE_ARTICLE_FIELDS.some((field) => current[field] !== row[field])) valueChanges += 1;
+      }
+      const removed = existing.filter((row) => !generalIds.has(row.article_id)).length;
+
+      db.run('DELETE FROM sede_articles WHERE sede_id = ?', sedeId);
+      for (const row of general) {
+        insertSedeArticle(sedeId, toCamel(row), row.updated_at, row.updated_at);
+      }
+
+      return { articles: general.length, created, updated, removed, priceChanges, valueChanges };
+    };
+
+    if (!transaction) return run();
+    db.exec('BEGIN');
+    try {
+      const result = run();
+      db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /**
+   * Rows whose values differ from the general master, compared field by field.
+   *
+   * The previous timestamp comparison undercounts: a row imported from an
+   * older store, or written in the same millisecond as its base, keeps a
+   * timestamp that is not strictly newer even though its values are the only
+   * copy of what the operator typed. Comparing values is immune to clock
+   * granularity and makes the consent gates describe real data loss.
+   */
+  function differenceCount(sedeId) {
+    const general = new Map(activeArticleRows().map((row) => [row.id, row]));
+    return db
+      .all('SELECT * FROM sede_articles WHERE sede_id = ?', sedeId)
+      .filter((row) => {
+        const base = general.get(row.article_id);
+        // An article that no longer exists in the general master is the only
+        // place its values live, so losing it is a real override loss.
+        if (!base) return true;
+        return SEDE_ARTICLE_FIELDS.some((field) => row[field] !== base[field]);
+      }).length;
+  }
+
+  /**
+   * Give every sede an initial master. Sedes created before the catalogue existed
+   * (or before this feature shipped) start empty and are filled from the general one.
+   * Safe to call on every boot: sedes that already have rows are left alone.
+   */
+  function backfillSedeMasters() {
+    for (const sede of db.all('SELECT id FROM sedes')) {
+      try {
+        const rows = db.get('SELECT COUNT(*) AS n FROM sede_articles WHERE sede_id = ?', sede.id).n;
+        if (rows === 0) syncSedeFromGeneral(sede.id);
+      } catch (err) {
+        // One broken sede must never keep the whole API from starting.
+        console.warn(`could not backfill the master of sede ${sede.id}: ${err.message}`);
+      }
+    }
+  }
+
+  /** Resolve the optional `?sedeId=` scope; throws a status-tagged error when invalid. */
+  function resolveScope(query) {
+    const raw = query.get('sedeId');
+    if (raw === null) return { sedeId: null, sede: null };
+    if (!/^\d+$/.test(raw) || Number(raw) <= 0) {
+      throw Object.assign(new Error('invalid sedeId'), { status: 400 });
+    }
+    const sede = db.get('SELECT * FROM sedes WHERE id = ?', Number(raw));
+    if (!sede) throw Object.assign(new Error('sede not found'), { status: 404 });
+    return { sedeId: sede.id, sede };
+  }
+
+  /**
+   * Articles whose general row was modified after this sede's copy was last
+   * synced from it.
+   *
+   * `base_updated_at` records the general `updated_at` the copy came from, so
+   * this signal stays honest after a per-sede edit (which only moves
+   * `updated_at`) and clears on the next sync.
+   */
+  function generalAheadCount(sedeId) {
+    return db.get(
+      `SELECT COUNT(*) AS n FROM sede_articles se
+         JOIN articles a ON a.id = se.article_id
+        WHERE se.sede_id = ? AND a.updated_at > se.base_updated_at`,
+      sedeId,
+    ).n;
+  }
+
+  /**
+   * How many sedes need attention: either their own master differs from the last
+   * deployment, or the general master moved ahead of their copy.
+   */
   function pendingSedeCount() {
-    const { hash } = catalogState();
     const rows = db.all(
       `SELECT s.id,
               (SELECT d.catalog_hash FROM deployments d WHERE d.sede_id = s.id ORDER BY d.revision DESC LIMIT 1) AS last_hash
          FROM sedes s`,
     );
-    return rows.filter((row) => row.last_hash !== hash).length;
+    return rows.filter(
+      (row) => row.last_hash !== sedeCatalogState(row.id).hash || generalAheadCount(row.id) > 0,
+    ).length;
   }
 
   /** Coerce an incoming article body into the shape the validator and builder expect. */
@@ -389,6 +590,10 @@ export function createApp({
     return db.all('SELECT permission FROM role_permissions WHERE role_id = ? ORDER BY permission', role.id)
       .map((row) => row.permission);
   }
+
+  // Existing installations predate per-sede masters; fill any empty ones once.
+  // `db: null` is a supported mode for deployments that only serve static assets.
+  if (db) backfillSedeMasters();
 
   const routes = [
     // ---- authentication ----
@@ -460,7 +665,29 @@ export function createApp({
       method: 'GET',
       pattern: /^\/api\/articles$/,
       permission: 'articles.read',
-      handler: async (req, res) => json(res, 200, { articles: activeArticles() }),
+      handler: async (req, res, params, query) => {
+        const scope = resolveScope(query);
+        if (scope.sedeId === null) {
+          return json(res, 200, { scope: 'general', articles: activeArticles() });
+        }
+        const general = generalArticlesById();
+        const articles = sedeArticles(scope.sedeId).map((article) => {
+          const base = general.get(article.id);
+          return {
+            ...article,
+            generalPriceCents: base?.priceCents ?? null,
+            // True when this sede copy carries any value the general master does not.
+            differsFromGeneral: base
+              ? SEDE_ARTICLE_CAMEL_FIELDS.some((field) => article[field] !== base[field])
+              : true,
+          };
+        });
+        return json(res, 200, {
+          scope: 'sede',
+          sede: { id: scope.sede.id, name: scope.sede.name },
+          articles,
+        });
+      },
     },
     {
       method: 'GET',
@@ -468,17 +695,19 @@ export function createApp({
       permission: 'articles.read',
       handler: async (req, res, params, query) => {
         const format = query.get('format') ?? 'txp';
-        const articles = activeArticles();
+        const scope = resolveScope(query);
+        const articles = scope.sedeId === null ? activeArticles() : sedeArticles(scope.sedeId);
         const stamp = localDateStamp();
+        const suffix = scope.sedeId === null ? '' : `-${deriveRoleKey(scope.sede.name)}`;
 
         if (format === 'txp') {
-          return attachment(res, toTxpText(articles), `maestro-balanza-${stamp}.txp`);
+          return attachment(res, toTxpText(articles), `maestro-balanza-${stamp}${suffix}.txp`);
         }
         if (format === 'vendor') {
           return attachment(
             res,
             buildVendorWorkbook(articles),
-            `maestro-balanza-${stamp}-fabricante.xlsx`,
+            `maestro-balanza-${stamp}-fabricante${suffix}.xlsx`,
             XLSX_CONTENT_TYPE,
           );
         }
@@ -501,14 +730,17 @@ export function createApp({
             packageType: article.packageType,
           })),
         });
-        return attachment(res, workbook, `maestro-balanza-${stamp}.xlsx`, XLSX_CONTENT_TYPE);
+        return attachment(res, workbook, `maestro-balanza-${stamp}${suffix}.xlsx`, XLSX_CONTENT_TYPE);
       },
     },
     {
       method: 'GET',
       pattern: /^\/api\/articles\/suggest$/,
       permission: 'articles.read',
-      handler: async (req, res) => {
+      handler: async (req, res, params, query) => {
+        if (query.get('sedeId') !== null) {
+          return fail(res, 409, 'articles are created in the general master');
+        }
         const { articles } = catalogState();
         const maxBarcode = articles.reduce((max, a) => Math.max(max, a.barcode), 12904);
         const maxLf = articles.reduce((max, a) => Math.max(max, a.lfCode), 0);
@@ -519,48 +751,115 @@ export function createApp({
       method: 'POST',
       pattern: /^\/api\/articles$/,
       permission: 'articles.write',
-      handler: async (req, res) => {
+      handler: async (req, res, params, query) => {
+        if (query.get('sedeId') !== null) {
+          return fail(res, 409, 'articles are created in the general master');
+        }
         const body = await readJson(req);
         const { articles } = catalogState();
         const article = normalizeArticle(body);
         if (rejectInvalidCandidate(res, [...articles, article])) return;
-        const row = insertArticle(article);
-        return json(res, 201, { article: row, pendingSedes: pendingSedeCount() });
+
+        // A sede may override a barcode or LF code, so the new article must also fit
+        // inside each sede master. Abort before any write when one of them refuses it.
+        for (const sede of db.all('SELECT * FROM sedes ORDER BY name')) {
+          const candidate = [...sedeArticles(sede.id), article];
+          const report = validateRows(candidate.map((row, index) => ({ line: index + 1, ...row })));
+          if (report.ok) continue;
+          return fail(
+            res,
+            409,
+            `article conflicts with the master of sede "${sede.name}"`,
+            report,
+          );
+        }
+
+        let row;
+        db.exec('BEGIN');
+        try {
+          row = insertArticle(article);
+          const copy = toCamel(row);
+          for (const sede of db.all('SELECT id FROM sedes')) {
+            insertSedeArticle(sede.id, copy, row.updated_at, row.updated_at);
+          }
+          db.exec('COMMIT');
+        } catch (err) {
+          db.exec('ROLLBACK');
+          throw err;
+        }
+        return json(res, 201, { article: toCamel(row), pendingSedes: pendingSedeCount() });
       },
     },
     {
       method: 'PATCH',
       pattern: /^\/api\/articles\/(\d+)$/,
       permission: 'articles.write',
-      handler: async (req, res, [articleId]) => {
+      handler: async (req, res, [articleId], query) => {
         const existing = db.get('SELECT * FROM articles WHERE id = ?', Number(articleId));
         if (!existing) return fail(res, 404, 'article not found');
         const body = await readJson(req);
+        const scope = resolveScope(query);
 
-        const current = activeArticles().find((a) => a.id === existing.id);
+        if (scope.sedeId === null) {
+          // General scope: a general edit deliberately does NOT touch sede masters.
+          // It only reaches the scales after the general master is published (synced) to that sede.
+          const current = activeArticles().find((a) => a.id === existing.id);
+          const updated = normalizeArticle(body, current);
+          const candidate = activeArticles().map((a) => (a.id === existing.id ? updated : a));
+          if (rejectInvalidCandidate(res, candidate)) return;
+
+          db.run(
+            `UPDATE articles SET barcode = ?, name = ?, lf_code = ?, plu_number = ?, price_cents = ?,
+               unit_code = ?, department = ?, validity_days = ?, package_type = ?, barcode_type = ?, updated_at = ?
+             WHERE id = ?`,
+            updated.barcode, updated.name, updated.lfCode, updated.pluNumber, updated.priceCents,
+            updated.unitCode, updated.department, updated.validityDays, updated.packageType,
+            updated.barcodeType, now(), existing.id,
+          );
+          return json(res, 200, {
+            article: toCamel(db.get('SELECT * FROM articles WHERE id = ?', existing.id)),
+            pendingSedes: pendingSedeCount(),
+          });
+        }
+
+        const currentRow = db.get(
+          'SELECT * FROM sede_articles WHERE sede_id = ? AND article_id = ?',
+          scope.sedeId, existing.id,
+        );
+        if (!currentRow) return fail(res, 404, 'article not found in this sede');
+
+        const current = toCamel({ ...currentRow, id: currentRow.article_id });
         const updated = normalizeArticle(body, current);
-        const candidate = activeArticles().map((a) => (a.id === existing.id ? updated : a));
+        const candidate = sedeArticles(scope.sedeId).map((a) => (a.id === existing.id ? updated : a));
         if (rejectInvalidCandidate(res, candidate)) return;
 
-        db.run(
-          `UPDATE articles SET barcode = ?, name = ?, lf_code = ?, plu_number = ?, price_cents = ?,
-             unit_code = ?, department = ?, validity_days = ?, package_type = ?, barcode_type = ?, updated_at = ?
-           WHERE id = ?`,
-          updated.barcode, updated.name, updated.lfCode, updated.pluNumber, updated.priceCents,
-          updated.unitCode, updated.department, updated.validityDays, updated.packageType,
-          updated.barcodeType, now(), existing.id,
+        updateSedeArticle(scope.sedeId, { ...updated, id: existing.id }, now());
+        const stored = db.get(
+          'SELECT * FROM sede_articles WHERE sede_id = ? AND article_id = ?',
+          scope.sedeId, existing.id,
         );
-        return json(res, 200, { article: db.get('SELECT * FROM articles WHERE id = ?', existing.id), pendingSedes: pendingSedeCount() });
+        const general = generalArticlesById();
+        return json(res, 200, {
+          article: {
+            ...toCamel({ ...stored, id: stored.article_id }),
+            generalPriceCents: general.get(existing.id)?.priceCents ?? null,
+          },
+          pendingSedes: pendingSedeCount(),
+        });
       },
     },
     {
       method: 'DELETE',
       pattern: /^\/api\/articles\/(\d+)$/,
       permission: 'articles.write',
-      handler: async (req, res, [articleId]) => {
+      handler: async (req, res, [articleId], query) => {
+        if (query.get('sedeId') !== null) {
+          return fail(res, 409, 'articles are deleted from the general master');
+        }
         const existing = db.get('SELECT * FROM articles WHERE id = ?', Number(articleId));
         if (!existing) return fail(res, 404, 'article not found');
         // Hard delete: previous catalogues remain available in deployments.catalog_json.
+        // The sede copies go with it through the ON DELETE CASCADE foreign key.
         db.run('DELETE FROM articles WHERE id = ?', existing.id);
         return json(res, 200, { deleted: existing.barcode, pendingSedes: pendingSedeCount() });
       },
@@ -569,7 +868,10 @@ export function createApp({
       method: 'PUT',
       pattern: /^\/api\/articles$/,
       permission: 'articles.write',
-      handler: async (req, res) => {
+      handler: async (req, res, params, query) => {
+        if (query.get('sedeId') !== null) {
+          return fail(res, 409, 'articles are imported into the general master');
+        }
         const body = await readJson(req);
         const articles = Array.isArray(body.articles) ? body.articles : null;
         if (!articles) return fail(res, 400, 'articles array is required');
@@ -591,6 +893,18 @@ export function createApp({
         const report = validateRows(rows);
         if (!report.ok) return json(res, 422, { error: 'catalog rejected', validation: report });
 
+        // The replace cascades every sede copy away, so per-sede overrides are lost.
+        // Ask first: a documented caller (scripts/set-validity.mjs) would otherwise
+        // wipe every per-sede price without noticing.
+        const sedeOverridesDiscarded = db.all('SELECT id FROM sedes')
+          .reduce((total, sede) => total + differenceCount(sede.id), 0);
+        if (sedeOverridesDiscarded > 0 && body.acceptSedeOverridesLoss !== true) {
+          return json(res, 409, {
+            error: `the import would discard ${sedeOverridesDiscarded} per-sede overrides; resend with acceptSedeOverridesLoss: true`,
+            overrides: sedeOverridesDiscarded,
+          });
+        }
+
         db.exec('BEGIN');
         try {
           db.run('DELETE FROM articles');
@@ -603,12 +917,20 @@ export function createApp({
             insert.run(row.barcode, row.name, row.lfCode, row.pluNumber, row.priceCents, row.unitCode,
               row.department, row.validityDays, row.packageType, row.barcodeType, now());
           }
+          // Article ids changed, so every sede master is rebuilt in the same transaction.
+          for (const sede of db.all('SELECT id FROM sedes')) {
+            syncSedeFromGeneral(sede.id, { transaction: false });
+          }
           db.exec('COMMIT');
         } catch (err) {
           db.exec('ROLLBACK');
           return fail(res, 422, 'catalog insert failed', err.message);
         }
-        return json(res, 200, { articles: articles.length, warnings: report.warnings });
+        return json(res, 200, {
+          articles: articles.length,
+          warnings: report.warnings,
+          sedeOverridesDiscarded,
+        });
       },
     },
 
@@ -621,22 +943,67 @@ export function createApp({
         const body = await readJson(req);
         if (!body.name) return fail(res, 400, 'name is required');
         if (db.get('SELECT id FROM sedes WHERE name = ?', body.name)) return fail(res, 409, 'a sede with that name already exists');
-        db.run(
-          'INSERT INTO sedes (name, revision, poll_interval_seconds, created_at) VALUES (?, 1, ?, ?)',
-          body.name,
-          body.pollIntervalSeconds ?? 60,
-          now(),
-        );
-        return json(res, 201, db.get('SELECT * FROM sedes WHERE name = ?', body.name));
+
+        let sede;
+        db.exec('BEGIN');
+        try {
+          db.run(
+            'INSERT INTO sedes (name, revision, poll_interval_seconds, created_at) VALUES (?, 1, ?, ?)',
+            body.name,
+            body.pollIntervalSeconds ?? 60,
+            now(),
+          );
+          sede = db.get('SELECT * FROM sedes WHERE name = ?', body.name);
+          // A brand new sede starts with the full catalogue, no explicit sync needed.
+          // Same transaction so a failed sync never leaves an empty, unusable sede.
+          syncSedeFromGeneral(sede.id, { transaction: false });
+          db.exec('COMMIT');
+        } catch (err) {
+          db.exec('ROLLBACK');
+          throw err;
+        }
+        return json(res, 201, sede);
       },
     },
     {
       method: 'GET',
       pattern: /^\/api\/catalog$/,
       permission: 'articles.read',
-      handler: async (req, res) => {
-        const { articles, hash } = catalogState();
+      handler: async (req, res, params, query) => {
+        const scope = resolveScope(query);
+        const { articles, hash } = scope.sedeId === null
+          ? catalogState()
+          : sedeCatalogState(scope.sedeId);
         return json(res, 200, { hash, articleCount: articles.length, articles });
+      },
+    },
+    {
+      method: 'POST',
+      pattern: /^\/api\/sedes\/(\d+)\/articles\/sync$/,
+      permission: 'articles.write',
+      handler: async (req, res, [sedeId]) => {
+        const sede = db.get('SELECT * FROM sedes WHERE id = ?', Number(sedeId));
+        if (!sede) return fail(res, 404, 'sede not found');
+        // A sync replaces the whole sede master, so the client must echo back the
+        // number of overrides it showed the operator. A boolean consent cannot
+        // catch a stale count: the operator could accept 1 and lose 40.
+        const body = await readJson(req);
+        // Rows whose values differ from the general master: the number the client
+        // showed the operator before asking for consent.
+        const overrides = differenceCount(sede.id);
+        if (overrides > 0 && Number(body.expectedOverrides) !== overrides) {
+          return json(res, 409, {
+            error: `the sede has ${overrides} article${overrides === 1 ? '' : 's'} that differ${overrides === 1 ? 's' : ''} from the general master right now; confirm with expectedOverrides: ${overrides}`,
+            overrides,
+          });
+        }
+        const counts = syncSedeFromGeneral(sede.id);
+        return json(res, 200, {
+          sedeId: sede.id,
+          ...counts,
+          overrides,
+          pendingSedes: pendingSedeCount(),
+        });
       },
     },
     {
@@ -644,13 +1011,21 @@ export function createApp({
       pattern: /^\/api\/sedes$/,
       permission: 'sedes.read',
       handler: async (req, res) => {
-        const { hash } = catalogState();
         const sedes = db.all('SELECT * FROM sedes ORDER BY name').map((sede) => {
           const last = db.get(
             'SELECT catalog_hash FROM deployments WHERE sede_id = ? ORDER BY revision DESC LIMIT 1',
             sede.id,
           );
-          return { ...sede, pendingChanges: !last || last.catalog_hash !== hash };
+          const articlesAhead = generalAheadCount(sede.id);
+          const overrides = differenceCount(sede.id);
+          const unpublished = !last || last.catalog_hash !== sedeCatalogState(sede.id).hash;
+          return {
+            ...sede,
+            pendingChanges: unpublished || articlesAhead > 0,
+            generalAhead: articlesAhead > 0,
+            articlesAhead,
+            overrides,
+          };
         });
         return json(res, 200, { sedes });
       },
@@ -770,27 +1145,101 @@ export function createApp({
       pattern: /^\/api\/sedes\/(\d+)\/deployments$/,
       permission: 'deployments.create',
       handler: async (req, res, [sedeId]) => {
+        // Read the body first: the sede lookup and the revision bump below must
+        // stay as close as possible to the write, so an overlapping request
+        // cannot reuse a revision read before this request yielded.
+        const body = await readJson(req);
         const sede = db.get('SELECT * FROM sedes WHERE id = ?', Number(sedeId));
         if (!sede) return fail(res, 404, 'sede not found');
-        const body = await readJson(req);
-        const articles = activeArticles();
-        if (articles.length === 0) return fail(res, 409, 'the catalog is empty; upload articles first');
+        // A sync requested by the publisher travels in the same transaction as
+        // the revision bump and the deployment insert: a failure never leaves a
+        // half-synced master behind, and the route only needs deployments.create.
+        const syncRequested = body.syncFromGeneral === true;
+        // Syncing replaces the sede master wholesale, so this route can destroy
+        // per-sede overrides with `deployments.create` alone. Consent is bound to
+        // the content: the client echoes the exact count the operator confirmed,
+        // so a stale confirmation is refused instead of silently destroying more.
+        if (syncRequested) {
+          const overrides = differenceCount(sede.id);
+          if (overrides > 0 && Number(body.expectedOverrides) !== overrides) {
+            return json(res, 409, {
+              error: `the sede has ${overrides} article${overrides === 1 ? '' : 's'} that differ${overrides === 1 ? 's' : ''} from the general master right now; confirm with expectedOverrides: ${overrides}`,
+              overrides,
+            });
+          }
+        }
 
-        const revision = sede.revision + 1;
-        const hash = catalogHash(articles);
-        db.run('UPDATE sedes SET revision = ? WHERE id = ?', revision, sede.id);
-        db.run(
-          `INSERT INTO deployments (sede_id, revision, scale_ids, article_count, catalog_hash, catalog_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          sede.id, revision, body.scaleIds ? JSON.stringify(body.scaleIds) : null,
-          articles.length, hash, JSON.stringify(articles), now(),
-        );
-        const deployment = db.get('SELECT * FROM deployments WHERE sede_id = ? AND revision = ?', sede.id, revision);
+        let articles;
+        let hash;
+        let syncCounts = null;
+        let deploymentId = null;
+        db.exec('BEGIN');
+        try {
+          if (syncRequested) {
+            const overrides = differenceCount(sede.id);
+            syncCounts = { ...syncSedeFromGeneral(sede.id, { transaction: false }), overrides };
+          }
+
+          ({ articles, hash } = sedeCatalogState(sede.id));
+          if (articles.length === 0) {
+            db.exec('ROLLBACK');
+            return fail(
+              res,
+              409,
+              syncRequested
+                ? 'the general master is empty: upload articles before publishing'
+                : 'the sede master is empty; sync it from the general master first',
+            );
+          }
+
+          // A general edit never reaches the sede on its own, and `pendingChanges`
+          // cannot see it once the sede master was already published. Without this
+          // guard the Publish screen would happily ship stale prices. A requested
+          // sync already pulled the general values, so it needs no acceptance.
+          const articlesAhead = generalAheadCount(sede.id);
+          if (!syncRequested && articlesAhead > 0 && body.acceptGeneralChanges !== true) {
+            db.exec('ROLLBACK');
+            return json(res, 409, {
+              error: 'the general master changed since this sede was last synced; sync it first or publish anyway with acceptGeneralChanges: true',
+              articlesAhead,
+            });
+          }
+
+          // Re-read the revision from the row inside the transaction and bump it
+          // in the same synchronous block as the INSERT: this read, the UPDATE
+          // and the INSERT have no `await` between them, so two overlapping
+          // deploys cannot both compute the same number. Reading it before the
+          // transaction (or before `readJson`) left a window where both requests
+          // saw the same value.
+          const revision = db.get('SELECT revision FROM sedes WHERE id = ?', sede.id).revision + 1;
+          // An empty array is as good as no selection: store null so this path
+          // can never record a deployment that targets zero scales.
+          const scaleIds = Array.isArray(body.scaleIds) && body.scaleIds.length === 0
+            ? null
+            : body.scaleIds;
+          db.run('UPDATE sedes SET revision = ? WHERE id = ?', revision, sede.id);
+          const inserted = db.run(
+            `INSERT INTO deployments (sede_id, revision, scale_ids, article_count, catalog_hash, catalog_json, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            sede.id, revision, scaleIds ? JSON.stringify(scaleIds) : null,
+            articles.length, hash, JSON.stringify(articles), now(),
+          );
+          deploymentId = Number(inserted.lastInsertRowid);
+          db.exec('COMMIT');
+        } catch (err) {
+          db.exec('ROLLBACK');
+          throw err;
+        }
+
+        // Read the row back by its own id: a lookup by (sede_id, revision) could
+        // return another request's row if the revision ever repeated.
+        const deployment = db.get('SELECT * FROM deployments WHERE id = ?', deploymentId);
         return json(res, 201, {
           deploymentId: deployment.id,
-          revision,
+          revision: deployment.revision,
           articleCount: articles.length,
           catalogHash: hash,
+          sync: syncCounts,
         });
       },
     },

@@ -1,6 +1,6 @@
 # BalanzaWeb — estado del proyecto
 
-Documento de traspaso. Última actualización: **2026-11-04**.
+Documento de traspaso. Última actualización: **2026-11-06**.
 
 **Estado en una línea:** desplegado en producción con Dokploy, catálogo real de 835
 artículos cargado (todos con 365 días de validez), agente 1.0.2 instalado y verificado
@@ -137,12 +137,14 @@ lo quita. Un rol asignado a usuarios no se puede borrar (`409`). Los seeds `admi
 ```
 POST /api/auth/login | logout        GET /api/auth/me
 GET/POST /api/articles               PATCH/DELETE /api/articles/:id
+GET  /api/articles?sedeId=           PATCH /api/articles/:id?sedeId=
 GET  /api/articles/suggest           PUT /api/articles        (carga masiva)
-GET  /api/articles/export?format=txp|xlsx|vendor  (maestro .Txp, Excel editable o planilla del fabricante; sin `format` usa `txp`)
-GET  /api/catalog                    GET /api/units
+GET  /api/articles/export?format=txp|xlsx|vendor[&sedeId=]  (maestro .Txp, Excel editable o planilla del fabricante; sin `format` usa `txp`)
+GET  /api/catalog[?sedeId=]          GET /api/units
 GET/POST /api/sedes                  GET/POST /api/sedes/:id/scales
 DELETE /api/sedes/:id                DELETE /api/sedes/:id/scales/:scaleId
 POST /api/sedes/:id/pairing-code     POST /api/sedes/:id/deployments
+POST /api/sedes/:id/articles/sync
 GET  /api/sedes/:id/status           POST /api/agents/:id/revoke
 GET/POST /api/users                  PATCH/DELETE /api/users/:id
 PUT  /api/users/:id/roles            PUT /api/users/:id/password
@@ -152,6 +154,23 @@ PUT  /api/roles/:key/permissions
 POST /agent/enroll                   GET /agent/sync?revision=N  (304 si no hay cambios)
 POST /agent/report
 ```
+
+`?sedeId=` acota las rutas de artículos, exportación y catálogo al maestro de esa
+sede. Sin `sedeId` operan sobre el maestro general; crear, borrar e importar
+(`POST`, `DELETE` y `PUT /api/articles`) sólo existen en el general y responden
+`409` si se les pasa `sedeId`.
+
+`POST /api/sedes/:id/deployments` arma la revisión con el maestro de la sede. Si el
+general cambió después de la última sincronización, responde `409` salvo que el
+cuerpo traiga `acceptGeneralChanges: true`. Con `syncFromGeneral: true` sincroniza y
+publica en una sola transacción (no requiere `articles.write`); si la sede tiene
+overrides propios responde `409` con `overrides` salvo que el cuerpo traiga
+`expectedOverrides` con exactamente ese número (la web lo envía con el valor que el
+operador vio en el diálogo, así que un conteo viejo no pasa). `GET /api/sedes`
+informa por sede `generalAhead`, `articlesAhead`, `overrides` y `pendingChanges`
+(maestro distinto de la última publicación o general adelantado).
+`POST /api/sedes/:id/articles/sync` devuelve
+`{ articles, created, updated, removed, priceChanges, valueChanges, overrides, pendingSedes }`.
 
 ## 5. Agente local
 
@@ -194,10 +213,10 @@ POST /agent/report
 
 | Pantalla | Permiso | Qué hace |
 |---|---|---|
-| Artículos | `articles.read` | Maestro con **paginado 10/30/50/100**, búsqueda progresiva con spinner, alta/edición con sugerencia de código libre y selector de las 13 unidades, y tres botones, **Exportar Excel**, **Exportar .Txp** y **Exportar fabricante**. El `xlsx` es para leer y editar; el `.Txp` y el `vendor` (fabricante) reproducen las 26 columnas del software del fabricante, y el segundo lo hace como planilla para su gestor de PLU |
+| Artículos | `articles.read` | Maestro con **paginado 10/30/50/100**, búsqueda progresiva con spinner, alta/edición con sugerencia de código libre y selector de las 13 unidades, y tres botones, **Exportar Excel**, **Exportar .Txp** y **Exportar fabricante**. El `xlsx` es para leer y editar; el `.Txp` y el `vendor` (fabricante) reproducen las 26 columnas del software del fabricante, y el segundo lo hace como planilla para su gestor de PLU. El selector **Maestro** alterna entre el general y una sede: en una sede no se crea ni se borra, cualquier artículo con datos distintos al general se marca con un icono de aviso que muestra el precio general (hover en escritorio, toque en móvil) y **Sincronizar con el maestro general** sobrescribe el maestro de esa sede |
 | Código de barras | `articles.read` | Genera el EAN-13 de una referencia: base de 12 dígitos con relleno a la derecha y dígito de control módulo 10. Dibuja el código como SVG (EAN-13 o CODE128) y lo descarga en PNG |
 | Sedes y balanzas | `sedes.read` | Alta y **baja** de sedes y balanzas (con confirmación), y código de autorización |
-| Publicar | `deployments.create` | Elige sede y destino (todas o balanzas puntuales) y crea la revisión |
+| Publicar | `deployments.create` | Elige una o varias sedes y crea una revisión por sede. Publica el maestro propio de cada sede; si el general cambió, ofrece **Sincronizar antes de publicar** (marcado por defecto). Con varias sedes publica a todas las balanzas de cada una: el destino por balanza queda para una sola sede |
 | Estado | `status.read` | Revisión publicada, resultado real por balanza, historial de envíos y **agentes de la sede**, que se pueden **revocar** con `agents.manage`; un agente revocado queda con la etiqueta `revocado` |
 | Usuarios | `users.manage` | Dos pestañas (**Usuarios** / **Roles**), búsqueda en el cliente por nombre o usuario, alta detrás de un botón y edición de nombre/usuario/estado, cambio de clave y roles con guardado explícito. En **Roles** se crean, renombran y eliminan roles y se editan sus permisos; el rol `admin` no se puede borrar ni perder `users.manage`, y un rol asignado no se borra. El rol de la cuenta `admin` está bloqueado |
 
@@ -211,13 +230,26 @@ misma medida, la tabla de usuarios usa `.table-cards` y se convierte en tarjetas
 etiquetas, y sus botones de acción dejan de ocultarse; el resto de las tablas todavía
 usa desplazamiento horizontal.
 
-Flujo de datos: **crear/editar deja la sede "con cambios sin publicar"** → publicar
-genera una revisión inmutable → el agente la baja en su próximo ciclo.
+Flujo de datos: **crear/editar deja pendiente de publicar** (en el general, para todas
+las sedes; en una sede, sólo para esa) → publicar genera una revisión inmutable → el
+agente la baja en su próximo ciclo.
+
+Dos maestros de artículos: el **general** (`articles`) y uno por sede
+(`sede_articles`, copia materializada). Cada sede tiene los mismos artículos que el
+general; sólo pueden diferir los valores. Crear es sólo en el general y se copia a
+todas las sedes. Editar el general **no** cambia los maestros de sede: el cambio
+llega a una sede recién al sincronizarla o al publicarla con sincronización. Editar
+una sede afecta sólo a esa sede. Borrar en el general borra también la copia de cada
+sede (cascada), y la carga masiva (`PUT /api/articles`) reconstruye todos los
+maestros de sede: responde `409` con `overrides` si perdería overrides por sede y
+sólo continúa con `acceptSedeOverridesLoss: true` (entonces devuelve
+`sedeOverridesDiscarded`).
 
 ## 7. Base de datos
 
 SQLite en desarrollo (`node:sqlite`). Tablas: `sedes`, `scales`, `agents`,
-`pairing_codes`, `articles`, `deployments` (con `catalog_json`, snapshot inmutable),
+`pairing_codes`, `articles`, `sede_articles` (maestro por sede),
+`deployments` (con `catalog_json`, snapshot inmutable),
 `deployment_results`, `users`, `roles`, `role_permissions`, `user_roles`, `sessions`.
 
 Para pasar a MySQL en el VPS alcanza con reimplementar los cuatro métodos de
@@ -290,6 +322,7 @@ node --test packages/plu-format/test/plu-format.test.js `
 | Hecho | **API lista para desplegar** (un solo proceso sirve API y web compilada, `/healthz`, headers de seguridad, rate limit de login, logs por request, archivos estáticos con fallback SPA, Dockerfile + compose + Caddy) | Implementado en `apps/api/src/app.js` e `apps/api/src/index.js`; artefactos en `deploy/` y guía en `docs/deploy.md` |
 | Hecho | **Despliegue en VPS + HTTPS** | Corriendo en Dokploy (Docker + Traefik + Let's Encrypt) desde `main`, con auto-deploy. Ver sección 15 |
 | Hecho | **Maestro de artículos en producción** | 835 artículos cargados con `PUT /api/articles` y persistidos en el volumen. 23 tienen precio 0 en el archivo original y se dejan así a propósito. Todos quedaron con 365 días de validez (ver §10 y `scripts/set-validity.mjs`) |
+| Hecho | **Maestro de artículos por sede** | Cada sede publica su propio maestro: crear copia el artículo a todas las sedes, editar el general no toca las sedes hasta sincronizar o publicar, editar una sede afecta sólo a esa sede, borrar en el general borra en todas y la carga masiva reconstruye todos los maestros de sede pidiendo confirmación explícita (`acceptSedeOverridesLoss`) |
 | Hecho | **Administración completa de sedes, balanzas y usuarios** | Alta, baja y edición; ver sección 15 |
 | Hecho | **Flujo completo con hardware**: sede + balanza + publicación + agente real | Agente 1.0.1 instalado y enrolado en dos sedes; publicaciones reales aplicadas en las balanzas que responden. La 1.0.2 se instaló en la sede y se verificó que la fecha de las etiquetas sale correcta; la 1.0.3 está publicada y pendiente de instalar |
 | Alta | **Balanzas que rechazan `start` en DR PORTILLO** (`.200`, `.202`, `.203`; CHARCUTERIA `.201` responde bien) | Verificado el 2026-11-04 desde la red de la sede: las cuatro contestan `hello` y `goodbye`, pero las tres que fallan **ignoran todo frame `D2`** (`start`, `data`, `commit`, `end`) mientras la `.201` ACKea cualquier `D2`. No es red, ni modelo, ni el contenido del frame: las tres nunca entran en modo descarga. Se probaron variantes de `start` y un `goodbye` previo sin efecto. El 2026-11-04 se probó y se descartó la hipótesis Aclas: ninguna de las cuatro responde el descubrimiento de Aclas Link69 (`71 03`) en UDP 5002 ni abre TCP 5001, y las cuatro ACKean el hello con 1 byte, así que la diferencia entre la `.201` que funciona y las tres que fallan es configuración por balanza, no marca ni protocolo. Falta la acción física: apagar/encender la balanza y, si sigue, revisar en el menú la IP de maestro y el modo de comunicación |

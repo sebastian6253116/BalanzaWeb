@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildCatalogPayload, catalogueSignature } from '../../../scripts/set-validity.mjs';
+import { articlesNeedingUpdate, catalogueSignature } from '../../../scripts/set-validity.mjs';
 
 const articles = [
   {
@@ -32,38 +32,30 @@ const articles = [
   },
 ];
 
-test('buildCatalogPayload sets validityDays and preserves every other field', () => {
-  const payload = buildCatalogPayload(articles, 365);
+test('articlesNeedingUpdate selects only the articles whose validity differs', () => {
+  const selected = articlesNeedingUpdate(articles, 365);
 
-  assert.equal(payload.length, 2);
-  assert.deepEqual(payload[0], {
-    name: 'LOMO DE AGUJA',
-    lfCode: 1,
-    pluNumber: 1,
-    barcode: 11001,
-    barcodeType: 7,
-    priceCents: 1450,
-    unitCode: 4,
-    department: 21,
-    validityDays: 365,
-    packageType: 0,
-  });
-  assert.equal(payload[1].validityDays, 365);
-  assert.equal(payload[1].priceCents, 0, 'zero-priced articles must stay at 0');
+  assert.deepEqual(selected.map((article) => article.id), [1, 2]);
+  assert.equal(selected[0], articles[0], 'the original objects are preserved, not copies');
+  assert.equal(selected[1].priceCents, 0, 'zero-priced articles are still selected');
 });
 
-test('buildCatalogPayload does not mutate the input articles', () => {
+test('articlesNeedingUpdate does not mutate the input articles', () => {
   const snapshot = structuredClone(articles);
 
-  buildCatalogPayload(articles, 365);
+  articlesNeedingUpdate(articles, 365);
 
   assert.deepEqual(articles, snapshot);
 });
 
-test('buildCatalogPayload honours a different target', () => {
-  const payload = buildCatalogPayload(articles, 30);
+test('articlesNeedingUpdate honours a different target', () => {
+  assert.deepEqual(articlesNeedingUpdate(articles, 364).map((article) => article.id), [2]);
+});
 
-  assert.deepEqual(payload.map((article) => article.validityDays), [30, 30]);
+test('articlesNeedingUpdate returns nothing when every article already matches', () => {
+  const alreadyAt365 = articles.map((article) => ({ ...article, validityDays: 365 }));
+
+  assert.deepEqual(articlesNeedingUpdate(alreadyAt365, 365), []);
 });
 
 test('catalogueSignature is stable for the same catalogue in another order', () => {
